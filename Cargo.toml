@@ -25,7 +25,7 @@ bench = false
 
 [dependencies]
 generic-camera = { path = "../generic_camera" }
-refimage = { path = "../refimage" }
+refimage = { version = "<1.0" }
 cameraunit = "5.1"
 chrono = "0.4"
 configparser = "3.0"
