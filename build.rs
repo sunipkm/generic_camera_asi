@@ -5,6 +5,9 @@ use std::{env, path::PathBuf};
 
 use bindgen::CargoCallbacks;
 
+#[cfg(target_os = "windows")]
+compile_error!("generic-camera-asi does not support Windows");
+
 fn main() {
     // This is the directory where the `c` library is located.
     // Canonicalize the path as `rustc-link-search` requires an absolute path.
@@ -17,15 +20,32 @@ fn main() {
 
     let headers_path_str = headers_path.to_str().expect("Path is not a valid string");
 
-    // Tell cargo to look for shared libraries in the specified directory
-    println!("cargo:rustc-link-search={}", libdir_path.to_str().unwrap());
-
-    // Tell cargo to tell rustc to link our `hello` library. Cargo will
-    // automatically know it must look for a `libhello.a` file.
-    println!("cargo:rustc-link-lib=ASICamera2");
+    // Tell cargo to tell rustc to find ASICamera2 in LD_LIBRARY_PATH on Linux. This is not
+    // an issue on macOS.
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(libdir) = std::env::var("LD_LIBRARY_PATH") {
+            let paths = libdir
+                .split(":")
+                .filter_map(|x| if x.is_empty() { None } else { Some(x) })
+                .collect::<Vec<&str>>();
+            for path in paths {
+                println!("cargo:rustc-link-search={}", path);
+            }
+        } else {
+            panic!(
+                "LD_LIBRARY_PATH is not set. Please set it to the directory containing ASICamera2: LD_LIBRARY_PATH=/path/to/ASICamera2:$LD_LIBRARY_PATH"
+            );
+        }
+    }
+    println!("cargo:rustc-link-lib=static=ASICamera2");
     println!("cargo:rustc-link-lib=pthread");
     println!("cargo:rustc-link-lib=m");
     println!("cargo:rustc-link-lib=usb-1.0");
+    #[cfg(target_os = "linux")]
+    println!("cargo:rustc-link-lib=stdc++");
+    #[cfg(target_os = "macos")]
+    println!("cargo:rustc-link-lib=c++");
 
     // The bindgen::Builder is the main entry point
     // to bindgen, and lets you build up options for

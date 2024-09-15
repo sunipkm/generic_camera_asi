@@ -8,7 +8,7 @@ license = "MIT OR Apache-2.0"
 readme = "README.MD"
 repository = "https://github.com/sunipkm/generic-camera-asi"
 homepage = "https://crates.io/crates/generic-camera-asi"
-keywords = ["cameraunit", "interface", "api", "zwo", "asi"]
+keywords = ["generic-camera", "interface", "api", "zwo", "asi"]
 build = "build.rs"
 description = """
 An efficient and ergonomic interface to capture images using cameras.
@@ -33,6 +33,8 @@ ctrlc = "3.4"
 fitsio = "0.21"
 image = "0.25"
 log = "0.4"
+bytemuck = "1.18.0"
+lazy_static = "1.5.0"
 
 [build-dependencies]
 bindgen = "0.68.1"

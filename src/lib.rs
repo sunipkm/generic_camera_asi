@@ -1,7 +1,7 @@
 #![cfg(not(windows))]
 mod asicamera_2;
-mod zwo_ffi;
 mod asihandle;
+mod zwo_ffi;
 #[macro_use]
 mod zwo_ffi_wrapper;
 

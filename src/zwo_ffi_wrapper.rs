@@ -1,23 +1,31 @@
-use std::{collections::HashMap, ffi::CStr, time::Duration};
+use std::{collections::HashMap, fmt::Display, os::raw, time::Duration};
 
-use generic_camera::{AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamPixelBpp, Property, PropertyLims};
+use generic_camera::{
+    AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError,
+    GenCamPixelBpp, Property, PropertyLims,
+};
 
 use crate::zwo_ffi::*;
 
 #[macro_export]
+/// Generate a closure that wraps an ASI function call that returns
+/// [`Result<(), AsiError>`].
 macro_rules! ASICALL {
     ($func:ident($($arg:expr),*)) => {
-        {
+        (|| -> Result<(), $crate::zwo_ffi_wrapper::AsiError> {
             #[allow(clippy::macro_metavars_in_unsafe)]
             let res = unsafe { $func($($arg),*) };
-            if res != $crate::zwo_ffi_wrapper::AsiError::Success as _ {
-                log::warn!("Error calling {}(): {:?}", stringify!($func), $crate::zwo_ffi_wrapper::AsiError::from(res as u32));
-                return Err($crate::zwo_ffi_wrapper::AsiError::from(res as u32));
+            if res != $crate::zwo_ffi::ASI_ERROR_CODE_ASI_SUCCESS as _ {
+                let args = vec![$(stringify!($arg)),*];
+                let args = args.join(", ");
+                let err = $crate::zwo_ffi_wrapper::AsiError::from((res as u32, Some(stringify!($func)), Some(args.as_str())));
+                log::warn!("Error calling {}", err);
+                return Err(err);
             }
-        }
+            Ok(())
+        })()
     };
 }
-
 
 impl Default for ASI_CAMERA_INFO {
     fn default() -> Self {
@@ -44,6 +52,14 @@ impl Default for ASI_CAMERA_INFO {
     }
 }
 
+impl Default for ASI_ID {
+    fn default() -> Self {
+        Self {
+            id: Default::default(),
+        }
+    }
+}
+
 impl Default for ASI_CONTROL_CAPS {
     fn default() -> Self {
         Self {
@@ -60,12 +76,18 @@ impl Default for ASI_CONTROL_CAPS {
     }
 }
 
+pub(crate) fn string_from_char<const N: usize>(inp: &[raw::c_char; N]) -> String {
+    let mut str = String::from_utf8_lossy(&unsafe {
+        std::mem::transmute_copy::<[raw::c_char; N], [u8; N]>(inp)
+    })
+    .to_string();
+    str.retain(|c| c != '\0');
+    str.trim().to_string()
+}
 
 impl From<ASI_CAMERA_INFO> for GenCamDescriptor {
     fn from(value: ASI_CAMERA_INFO) -> Self {
-        let name = unsafe { CStr::from_ptr(value.Name.as_ptr()) }
-            .to_string_lossy()
-            .into_owned();
+        let name = string_from_char(&value.Name);
         let mut info = HashMap::new();
         info.insert("Camera ID".to_string(), (value.CameraID as i64).into());
         info.insert("Sensor Height".to_string(), value.MaxHeight.into());
@@ -121,10 +143,48 @@ impl From<ASI_CAMERA_INFO> for GenCamDescriptor {
         GenCamDescriptor {
             id: value.CameraID as _,
             name,
-            vendor: "ZWO".to_string(),
+            vendor: "ZWO".into(),
             info,
         }
     }
+}
+
+pub fn get_control_value(handle: i32, control: AsiControlType) -> Result<(i64, i32), GenCamError> {
+    let mut value = Default::default();
+    let mut auto = Default::default();
+    let handle = handle as _;
+    let control = control as _;
+    ASICALL!(ASIGetControlValue(
+        handle,
+        control,
+        &mut value as _,
+        &mut auto as _
+    ))
+    .map_err(|e| match e {
+        AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+        AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+        AsiError::InvalidControlType(_, _) => GenCamError::InvalidControlType(control.to_string()),
+        _ => GenCamError::GeneralError(format!("{:?}", e)),
+    })?;
+    Ok((value, auto))
+}
+
+pub fn set_control_value(
+    handle: i32,
+    control: AsiControlType,
+    value: i64,
+    auto: ASI_BOOL,
+) -> Result<(), GenCamError> {
+    let handle = handle as _;
+    let control = control as _;
+    let value = value as _;
+    let auto = auto as _;
+    ASICALL!(ASISetControlValue(handle, control, value, auto)).map_err(|e| match e {
+        AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+        AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+        AsiError::InvalidControlType(_, _) => GenCamError::InvalidControlType(control.to_string()),
+        _ => GenCamError::GeneralError(format!("{:?}", e)),
+    })
 }
 
 pub fn get_pixfmt(list: &[i32], end: i32) -> Vec<GenCamPixelBpp> {
@@ -147,9 +207,8 @@ pub fn get_bins(list: &[i32], end: i32) -> Vec<u64> {
         .collect()
 }
 
-
 pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Property)> {
-    use ASIControlType::*;
+    use AsiControlType::*;
     match obj.ControlType.into() {
         Gain => Some((
             AnalogCtrl::Gain.into(),
@@ -272,11 +331,62 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
     }
 }
 
+/// ASI Camera ROI
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AsiRoi {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub bin: i32,
+    pub fmt: ASI_IMG_TYPE,
+}
+
+impl AsiRoi {
+    /// Get the current ROI
+    pub(crate) fn get(handle: i32) -> Result<Self, AsiError> {
+        let mut x = 0;
+        let mut y = 0;
+        let mut width = 0;
+        let mut height = 0;
+        let mut bin = 0;
+        let mut fmt = 0;
+        ASICALL!(ASIGetStartPos(handle, &mut x, &mut y))?;
+        ASICALL!(ASIGetROIFormat(
+            handle,
+            &mut width,
+            &mut height,
+            &mut bin,
+            &mut fmt
+        ))?;
+        Ok(Self {
+            x,
+            y,
+            width,
+            height,
+            bin,
+            fmt: fmt.into(),
+        })
+    }
+
+    /// Set the ROI
+    pub(crate) fn set(&self, handle: i32) -> Result<(), AsiError> {
+        ASICALL!(ASISetStartPos(handle, self.x, self.y))?;
+        ASICALL!(ASISetROIFormat(
+            handle,
+            self.width,
+            self.height,
+            self.bin,
+            self.fmt as i32
+        ))?;
+        Ok(())
+    }
+}
 
 #[repr(i32)]
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
-pub(crate) enum ASIControlType {
+pub(crate) enum AsiControlType {
     Gain = ASI_CONTROL_TYPE_ASI_GAIN as _,
     Exposure = ASI_CONTROL_TYPE_ASI_EXPOSURE as _,
     Gamma = ASI_CONTROL_TYPE_ASI_GAMMA as _,
@@ -298,98 +408,155 @@ pub(crate) enum ASIControlType {
     FanOn = ASI_CONTROL_TYPE_ASI_FAN_ON as _,
     PatternAdjust = ASI_CONTROL_TYPE_ASI_PATTERN_ADJUST as _,
     AntiDewHeater = ASI_CONTROL_TYPE_ASI_ANTI_DEW_HEATER as _,
-    FanAdjust = ASI_CONTROL_TYPE_ASI_FAN_ADJUST as _,
-    PwrLedBrightness = ASI_CONTROL_TYPE_ASI_PWRLED_BRIGNT as _,
-    UsbHubRst = ASI_CONTROL_TYPE_ASI_USBHUB_RESET as _,
-    GpsSupport = ASI_CONTROL_TYPE_ASI_GPS_SUPPORT as _,
-    GpsStartLine = ASI_CONTROL_TYPE_ASI_GPS_START_LINE as _,
-    GpsEndLine = ASI_CONTROL_TYPE_ASI_GPS_END_LINE as _,
-    RollingInterval = ASI_CONTROL_TYPE_ASI_ROLLING_INTERVAL as _,
     Invalid,
 }
 
-impl From<u32> for ASIControlType {
+impl From<u32> for AsiControlType {
     fn from(val: u32) -> Self {
         match val {
-            ASI_CONTROL_TYPE_ASI_GAIN => ASIControlType::Gain,
-            ASI_CONTROL_TYPE_ASI_EXPOSURE => ASIControlType::Exposure,
-            ASI_CONTROL_TYPE_ASI_GAMMA => ASIControlType::Gamma,
-            ASI_CONTROL_TYPE_ASI_WB_R => ASIControlType::WhiteBalR,
-            ASI_CONTROL_TYPE_ASI_WB_B => ASIControlType::WhiteBalB,
-            ASI_CONTROL_TYPE_ASI_BANDWIDTHOVERLOAD => ASIControlType::BWOvld,
-            ASI_CONTROL_TYPE_ASI_OVERCLOCK => ASIControlType::Overclock,
-            ASI_CONTROL_TYPE_ASI_TEMPERATURE => ASIControlType::Temperature,
-            ASI_CONTROL_TYPE_ASI_FLIP => ASIControlType::Flip,
-            ASI_CONTROL_TYPE_ASI_AUTO_MAX_EXP => ASIControlType::AutoExpMax,
-            ASI_CONTROL_TYPE_ASI_AUTO_TARGET_BRIGHTNESS => ASIControlType::AutoExpTarget,
-            ASI_CONTROL_TYPE_ASI_AUTO_MAX_GAIN => ASIControlType::AutoExpMaxGain,
-            ASI_CONTROL_TYPE_ASI_HARDWARE_BIN => ASIControlType::HardwareBin,
-            ASI_CONTROL_TYPE_ASI_HIGH_SPEED_MODE => ASIControlType::HighSpeedMode,
-            ASI_CONTROL_TYPE_ASI_COOLER_POWER_PERC => ASIControlType::CoolerPowerPercent,
-            ASI_CONTROL_TYPE_ASI_TARGET_TEMP => ASIControlType::TargetTemp,
-            ASI_CONTROL_TYPE_ASI_COOLER_ON => ASIControlType::CoolerOn,
-            ASI_CONTROL_TYPE_ASI_MONO_BIN => ASIControlType::MonoBin,
-            ASI_CONTROL_TYPE_ASI_FAN_ON => ASIControlType::FanOn,
-            ASI_CONTROL_TYPE_ASI_PATTERN_ADJUST => ASIControlType::PatternAdjust,
-            ASI_CONTROL_TYPE_ASI_ANTI_DEW_HEATER => ASIControlType::AntiDewHeater,
-            ASI_CONTROL_TYPE_ASI_FAN_ADJUST => ASIControlType::FanAdjust,
-            ASI_CONTROL_TYPE_ASI_PWRLED_BRIGNT => ASIControlType::PwrLedBrightness,
-            ASI_CONTROL_TYPE_ASI_USBHUB_RESET => ASIControlType::UsbHubRst,
-            ASI_CONTROL_TYPE_ASI_GPS_SUPPORT => ASIControlType::GpsSupport,
-            ASI_CONTROL_TYPE_ASI_GPS_START_LINE => ASIControlType::GpsStartLine,
-            ASI_CONTROL_TYPE_ASI_GPS_END_LINE => ASIControlType::GpsEndLine,
-            ASI_CONTROL_TYPE_ASI_ROLLING_INTERVAL => ASIControlType::RollingInterval,
-            _ => ASIControlType::Invalid,
+            ASI_CONTROL_TYPE_ASI_GAIN => AsiControlType::Gain,
+            ASI_CONTROL_TYPE_ASI_EXPOSURE => AsiControlType::Exposure,
+            ASI_CONTROL_TYPE_ASI_GAMMA => AsiControlType::Gamma,
+            ASI_CONTROL_TYPE_ASI_WB_R => AsiControlType::WhiteBalR,
+            ASI_CONTROL_TYPE_ASI_WB_B => AsiControlType::WhiteBalB,
+            ASI_CONTROL_TYPE_ASI_BANDWIDTHOVERLOAD => AsiControlType::BWOvld,
+            ASI_CONTROL_TYPE_ASI_OVERCLOCK => AsiControlType::Overclock,
+            ASI_CONTROL_TYPE_ASI_TEMPERATURE => AsiControlType::Temperature,
+            ASI_CONTROL_TYPE_ASI_FLIP => AsiControlType::Flip,
+            ASI_CONTROL_TYPE_ASI_AUTO_MAX_EXP => AsiControlType::AutoExpMax,
+            ASI_CONTROL_TYPE_ASI_AUTO_TARGET_BRIGHTNESS => AsiControlType::AutoExpTarget,
+            ASI_CONTROL_TYPE_ASI_AUTO_MAX_GAIN => AsiControlType::AutoExpMaxGain,
+            ASI_CONTROL_TYPE_ASI_HARDWARE_BIN => AsiControlType::HardwareBin,
+            ASI_CONTROL_TYPE_ASI_HIGH_SPEED_MODE => AsiControlType::HighSpeedMode,
+            ASI_CONTROL_TYPE_ASI_COOLER_POWER_PERC => AsiControlType::CoolerPowerPercent,
+            ASI_CONTROL_TYPE_ASI_TARGET_TEMP => AsiControlType::TargetTemp,
+            ASI_CONTROL_TYPE_ASI_COOLER_ON => AsiControlType::CoolerOn,
+            ASI_CONTROL_TYPE_ASI_MONO_BIN => AsiControlType::MonoBin,
+            ASI_CONTROL_TYPE_ASI_FAN_ON => AsiControlType::FanOn,
+            ASI_CONTROL_TYPE_ASI_PATTERN_ADJUST => AsiControlType::PatternAdjust,
+            ASI_CONTROL_TYPE_ASI_ANTI_DEW_HEATER => AsiControlType::AntiDewHeater,
+            _ => AsiControlType::Invalid,
         }
     }
 }
 
 #[repr(i32)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 #[non_exhaustive]
 pub(crate) enum AsiError {
-    Success = ASI_ERROR_CODE_ASI_SUCCESS as _,
-    InvalidIndex = ASI_ERROR_CODE_ASI_ERROR_INVALID_INDEX as _,
-    InvalidId = ASI_ERROR_CODE_ASI_ERROR_INVALID_ID as _,
-    InvalidControlType = ASI_ERROR_CODE_ASI_ERROR_INVALID_CONTROL_TYPE as _,
-    CameraClosed = ASI_ERROR_CODE_ASI_ERROR_CAMERA_CLOSED as _,
-    CameraRemoved = ASI_ERROR_CODE_ASI_ERROR_CAMERA_REMOVED as _,
-    InvalidPath = ASI_ERROR_CODE_ASI_ERROR_INVALID_PATH as _,
-    InvalidFileFormat = ASI_ERROR_CODE_ASI_ERROR_INVALID_FILEFORMAT as _,
-    InvalidSize = ASI_ERROR_CODE_ASI_ERROR_INVALID_SIZE as _,
-    InvalidImage = ASI_ERROR_CODE_ASI_ERROR_INVALID_IMGTYPE as _,
-    OutOfBounds = ASI_ERROR_CODE_ASI_ERROR_OUTOF_BOUNDARY as _,
-    Timeout = ASI_ERROR_CODE_ASI_ERROR_TIMEOUT as _,
-    InvalidSequence = ASI_ERROR_CODE_ASI_ERROR_INVALID_SEQUENCE as _,
-    BufferTooSmall = ASI_ERROR_CODE_ASI_ERROR_BUFFER_TOO_SMALL as _,
-    VideoModeActive = ASI_ERROR_CODE_ASI_ERROR_VIDEO_MODE_ACTIVE as _,
-    ExposureInProgress = ASI_ERROR_CODE_ASI_ERROR_EXPOSURE_IN_PROGRESS as _,
-    GeneralError = ASI_ERROR_CODE_ASI_ERROR_GENERAL_ERROR as _,
-    InvalidMode = ASI_ERROR_CODE_ASI_ERROR_INVALID_MODE as _,
+    InvalidIndex(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_INVALID_INDEX as _,
+    InvalidId(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_INVALID_ID as _,
+    InvalidControlType(Option<String>, Option<String>) =
+        ASI_ERROR_CODE_ASI_ERROR_INVALID_CONTROL_TYPE as _,
+    CameraClosed(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_CAMERA_CLOSED as _,
+    CameraRemoved(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_CAMERA_REMOVED as _,
+    InvalidPath(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_INVALID_PATH as _,
+    InvalidFileFormat(Option<String>, Option<String>) =
+        ASI_ERROR_CODE_ASI_ERROR_INVALID_FILEFORMAT as _,
+    InvalidSize(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_INVALID_SIZE as _,
+    InvalidImage(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_INVALID_IMGTYPE as _,
+    OutOfBounds(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_OUTOF_BOUNDARY as _,
+    Timeout(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_TIMEOUT as _,
+    InvalidSequence(Option<String>, Option<String>) =
+        ASI_ERROR_CODE_ASI_ERROR_INVALID_SEQUENCE as _,
+    BufferTooSmall(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_BUFFER_TOO_SMALL as _,
+    VideoModeActive(Option<String>, Option<String>) =
+        ASI_ERROR_CODE_ASI_ERROR_VIDEO_MODE_ACTIVE as _,
+    ExposureInProgress(Option<String>, Option<String>) =
+        ASI_ERROR_CODE_ASI_ERROR_EXPOSURE_IN_PROGRESS as _,
+    GeneralError(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_GENERAL_ERROR as _,
+    InvalidMode(Option<String>, Option<String>) = ASI_ERROR_CODE_ASI_ERROR_INVALID_MODE as _,
 }
 
-impl From<u32> for AsiError {
-    fn from(val: u32) -> Self {
+impl<T: Into<String>> From<(u32, Option<T>, Option<T>)> for AsiError {
+    fn from(val: (u32, Option<T>, Option<T>)) -> Self {
+        let (val, src, args) = val;
+        let src = src.map(|x| x.into());
+        let args = args.map(|x| x.into());
         match val {
-            ASI_ERROR_CODE_ASI_SUCCESS => AsiError::Success,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_INDEX => AsiError::InvalidIndex,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_ID => AsiError::InvalidId,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_CONTROL_TYPE => AsiError::InvalidControlType,
-            ASI_ERROR_CODE_ASI_ERROR_CAMERA_CLOSED => AsiError::CameraClosed,
-            ASI_ERROR_CODE_ASI_ERROR_CAMERA_REMOVED => AsiError::CameraRemoved,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_PATH => AsiError::InvalidPath,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_FILEFORMAT => AsiError::InvalidFileFormat,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_SIZE => AsiError::InvalidSize,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_IMGTYPE => AsiError::InvalidImage,
-            ASI_ERROR_CODE_ASI_ERROR_OUTOF_BOUNDARY => AsiError::OutOfBounds,
-            ASI_ERROR_CODE_ASI_ERROR_TIMEOUT => AsiError::Timeout,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_SEQUENCE => AsiError::InvalidSequence,
-            ASI_ERROR_CODE_ASI_ERROR_BUFFER_TOO_SMALL => AsiError::BufferTooSmall,
-            ASI_ERROR_CODE_ASI_ERROR_VIDEO_MODE_ACTIVE => AsiError::VideoModeActive,
-            ASI_ERROR_CODE_ASI_ERROR_EXPOSURE_IN_PROGRESS => AsiError::ExposureInProgress,
-            ASI_ERROR_CODE_ASI_ERROR_GENERAL_ERROR => AsiError::GeneralError,
-            ASI_ERROR_CODE_ASI_ERROR_INVALID_MODE => AsiError::InvalidMode,
-            _ => AsiError::GeneralError,
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_INDEX => AsiError::InvalidIndex(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_ID => AsiError::InvalidId(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_CONTROL_TYPE => {
+                AsiError::InvalidControlType(src, args)
+            }
+            ASI_ERROR_CODE_ASI_ERROR_CAMERA_CLOSED => AsiError::CameraClosed(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_CAMERA_REMOVED => AsiError::CameraRemoved(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_PATH => AsiError::InvalidPath(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_FILEFORMAT => AsiError::InvalidFileFormat(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_SIZE => AsiError::InvalidSize(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_IMGTYPE => AsiError::InvalidImage(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_OUTOF_BOUNDARY => AsiError::OutOfBounds(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_TIMEOUT => AsiError::Timeout(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_SEQUENCE => AsiError::InvalidSequence(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_BUFFER_TOO_SMALL => AsiError::BufferTooSmall(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_VIDEO_MODE_ACTIVE => AsiError::VideoModeActive(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_EXPOSURE_IN_PROGRESS => {
+                AsiError::ExposureInProgress(src, args)
+            }
+            ASI_ERROR_CODE_ASI_ERROR_GENERAL_ERROR => AsiError::GeneralError(src, args),
+            ASI_ERROR_CODE_ASI_ERROR_INVALID_MODE => AsiError::InvalidMode(src, args),
+            _ => AsiError::GeneralError(src, args),
         }
+    }
+}
+
+impl Display for AsiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use AsiError::*;
+        let (err, caller, args) = match self {
+            InvalidIndex(src, args) => ("Invalid Index", src, args),
+            InvalidId(src, args) => ("Invalid ID", src, args),
+            InvalidControlType(src, args) => ("Invalid Control Type", src, args),
+            CameraClosed(src, args) => ("Camera Closed", src, args),
+            CameraRemoved(src, args) => ("Camera Removed", src, args),
+            InvalidPath(src, args) => ("Invalid Path", src, args),
+            InvalidFileFormat(src, args) => ("Invalid File Format", src, args),
+            InvalidSize(src, args) => ("Invalid Size", src, args),
+            InvalidImage(src, args) => ("Invalid Image", src, args),
+            OutOfBounds(src, args) => ("Out of Bounds", src, args),
+            Timeout(src, args) => ("Timeout", src, args),
+            InvalidSequence(src, args) => ("Invalid Sequence", src, args),
+            BufferTooSmall(src, args) => ("Buffer Too Small", src, args),
+            VideoModeActive(src, args) => ("Video Mode Active", src, args),
+            ExposureInProgress(src, args) => ("Exposure In Progress", src, args),
+            GeneralError(src, args) => ("General Error", src, args),
+            InvalidMode(src, args) => ("Invalid Mode", src, args),
+        };
+        if let Some(caller) = caller {
+            if let Some(args) = args {
+                write!(f, "{}({}): {}", caller, args, err)
+            } else {
+                write!(f, "{}(): {}", caller, err)
+            }
+        } else {
+            write!(f, "Operation: {}", err)
+        }
+    }
+}
+
+pub enum AsiExposureStatus {
+    Idle = ASI_EXPOSURE_STATUS_ASI_EXP_IDLE as _,
+    Working = ASI_EXPOSURE_STATUS_ASI_EXP_WORKING as _,
+    Success = ASI_EXPOSURE_STATUS_ASI_EXP_SUCCESS as _,
+    Failed = ASI_EXPOSURE_STATUS_ASI_EXP_FAILED as _,
+}
+
+impl From<ASI_EXPOSURE_STATUS> for AsiExposureStatus {
+    fn from(val: ASI_EXPOSURE_STATUS) -> Self {
+        match val {
+            ASI_EXPOSURE_STATUS_ASI_EXP_IDLE => AsiExposureStatus::Idle,
+            ASI_EXPOSURE_STATUS_ASI_EXP_WORKING => AsiExposureStatus::Working,
+            ASI_EXPOSURE_STATUS_ASI_EXP_SUCCESS => AsiExposureStatus::Success,
+            ASI_EXPOSURE_STATUS_ASI_EXP_FAILED => AsiExposureStatus::Failed,
+            _ => AsiExposureStatus::Idle,
+        }
+    }
+}
+
+pub(crate) fn to_asibool(v: bool) -> ASI_BOOL {
+    if v {
+        ASI_BOOL_ASI_TRUE
+    } else {
+        ASI_BOOL_ASI_FALSE
     }
 }
