@@ -2,6 +2,8 @@
 mod asicamera_2;
 mod zwo_ffi;
 mod asihandle;
+#[macro_use]
+mod zwo_ffi_wrapper;
 
 pub use asicamera_2::{
     get_camera_ids, num_cameras, open_camera, open_first_camera, ASICameraProps, ASIImageFormat,
