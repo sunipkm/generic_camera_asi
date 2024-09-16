@@ -207,11 +207,12 @@ pub fn get_bins(list: &[i32], end: i32) -> Vec<u64> {
         .collect()
 }
 
-pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Property)> {
+pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, (AsiControlType, Property))> {
     use AsiControlType::*;
     match obj.ControlType.into() {
         Gain => Some((
             AnalogCtrl::Gain.into(),
+            (Gain,
             Property::new(
                 PropertyLims::Int {
                     min: obj.MinValue,
@@ -221,10 +222,11 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         Gamma => Some((
             AnalogCtrl::Gamma.into(),
+            (Gamma,
             Property::new(
                 PropertyLims::Int {
                     min: obj.MinValue,
@@ -234,10 +236,11 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         Temperature => Some((
             DeviceCtrl::Temperature.into(),
+            (Temperature,
             Property::new(
                 PropertyLims::Float {
                     min: obj.MinValue as f64 / 10.0,
@@ -247,10 +250,11 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         AutoExpMax => Some((
             ExposureCtrl::ExposureTime.into(),
+            (AutoExpMax,
             Property::new(
                 PropertyLims::Duration {
                     min: Duration::from_micros(obj.MinValue as _),
@@ -260,10 +264,11 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         AutoExpTarget => Some((
             ExposureCtrl::AutoTargetBrightness.into(),
+            (AutoExpTarget,
             Property::new(
                 PropertyLims::Int {
                     min: obj.MinValue,
@@ -273,10 +278,11 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         AutoExpMaxGain => Some((
             AnalogCtrl::Gain.into(),
+            (AutoExpMaxGain,
             Property::new(
                 PropertyLims::Int {
                     min: obj.MinValue,
@@ -286,10 +292,11 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         HighSpeedMode => Some((
             DeviceCtrl::HighSpeedMode.into(),
+            (HighSpeedMode,
             Property::new(
                 PropertyLims::Int {
                     min: obj.MinValue,
@@ -299,10 +306,11 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         CoolerPowerPercent => Some((
             DeviceCtrl::CoolerPower.into(),
+            (CoolerPowerPercent,
             Property::new(
                 PropertyLims::Int {
                     min: obj.MinValue,
@@ -312,10 +320,11 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         TargetTemp => Some((
             DeviceCtrl::CoolerTemp.into(),
+            (TargetTemp,
             Property::new(
                 PropertyLims::Int {
                     min: obj.MinValue,
@@ -325,7 +334,7 @@ pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, Pro
                 },
                 obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                 obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),
+            ),)
         )),
         _ => None,
     }
@@ -384,7 +393,7 @@ impl AsiRoi {
 }
 
 #[repr(i32)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 #[non_exhaustive]
 pub(crate) enum AsiControlType {
     Gain = ASI_CONTROL_TYPE_ASI_GAIN as _,
