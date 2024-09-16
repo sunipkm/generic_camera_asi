@@ -1,13 +1,14 @@
 #![allow(unused)]
 use core::{panic, str};
 use std::{
+    cell::{Ref, RefCell},
     collections::HashMap,
     ffi::{c_long, CStr},
     fmt::{self, Display, Formatter},
     mem::MaybeUninit,
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, RwLock,
     },
     thread::sleep,
     time::{Duration, Instant, SystemTime},
@@ -22,8 +23,9 @@ use crate::{
         ASI_BAYER_PATTERN_ASI_BAYER_BG, ASI_BAYER_PATTERN_ASI_BAYER_GB,
         ASI_BAYER_PATTERN_ASI_BAYER_GR, ASI_BAYER_PATTERN_ASI_BAYER_RG, ASI_BOOL_ASI_FALSE,
         ASI_BOOL_ASI_TRUE, ASI_CAMERA_INFO, ASI_CONTROL_CAPS, ASI_CONTROL_TYPE_ASI_COOLER_ON,
-        ASI_ID, ASI_IMG_TYPE, ASI_IMG_TYPE_ASI_IMG_END, ASI_IMG_TYPE_ASI_IMG_RAW16,
-        ASI_IMG_TYPE_ASI_IMG_RAW8,
+        ASI_CONTROL_TYPE_ASI_FLIP, ASI_FLIP_STATUS_ASI_FLIP_BOTH, ASI_FLIP_STATUS_ASI_FLIP_HORIZ,
+        ASI_FLIP_STATUS_ASI_FLIP_NONE, ASI_FLIP_STATUS_ASI_FLIP_VERT, ASI_ID, ASI_IMG_TYPE,
+        ASI_IMG_TYPE_ASI_IMG_END, ASI_IMG_TYPE_ASI_IMG_RAW16, ASI_IMG_TYPE_ASI_IMG_RAW8,
     },
     zwo_ffi_wrapper::{
         get_bins, get_control_value, get_pixfmt, map_control_cap, set_control_value,
@@ -86,7 +88,6 @@ fn get_sn(handle: i32) -> Result<[u8; 16], AsiError> {
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct LastExposureInfo {
-    pub start: Instant,
     pub tstamp: SystemTime,
     pub exposure: Duration,
     pub darkframe: bool,
@@ -103,10 +104,13 @@ pub(crate) struct AsiHandle {
     shutter_open: Option<Arc<AtomicBool>>,
     capturing: Arc<AtomicBool>,
     exposure: AtomicU64,
-    info: Arc<ASI_CAMERA_INFO>,
-    caps: Arc<HashMap<GenCamCtrl, (AsiControlType, Property)>>,
-    icap: Arc<Mutex<CaptureInfo>>,
-    imgstor: Vec<u8>,
+    gain: RefCell<Option<i64>>,
+    info: Arc<ASI_CAMERA_INFO>, // cloned to GenCamInfo
+    caps: Box<HashMap<GenCamCtrl, (AsiControlType, Property)>>, // truncated and copied to GenCamInfo
+    roi: RefCell<AsiRoi>,
+    last_exposure: RefCell<Option<LastExposureInfo>>,
+    start: Arc<RwLock<Option<Instant>>>,
+    imgstor: Vec<u16>,
 }
 
 #[derive(Debug, Clone)]
@@ -218,6 +222,20 @@ impl AsiHandle {
                 ),
             );
         }
+        caps.insert(
+            SensorCtrl::ReverseX.into(),
+            (
+                AsiControlType::Flip,
+                Property::new(PropertyLims::Bool { default: false }, false, false),
+            ),
+        );
+        caps.insert(
+            SensorCtrl::ReverseY.into(),
+            (
+                AsiControlType::Flip,
+                Property::new(PropertyLims::Bool { default: false }, false, false),
+            ),
+        );
         if info.MechanicalShutter == ASI_BOOL_ASI_TRUE as _ {
             let mut prop = Property::new(PropertyLims::Bool { default: true }, false, false);
             prop.set_doc(
@@ -278,14 +296,14 @@ impl AsiHandle {
                 None
             },
             capturing: Arc::new(AtomicBool::new(false)),
-            caps: Arc::new(caps),
+            caps: Box::new(caps),
             exposure: AtomicU64::new(0),
-            icap: Arc::new(Mutex::new(CaptureInfo {
-                roi,
-                last_exposure: None,
-            })),
+            roi: RefCell::new(roi),
+            last_exposure: RefCell::new(None),
             info: Arc::new(info),
-            imgstor: Vec::with_capacity((info.MaxHeight * info.MaxWidth * 2) as _),
+            gain: RefCell::new(None),
+            imgstor: vec![0u16; (roi.MaxHeight * roi.MaxWidth) as _],
+            start: Arc::new(RwLock::new(None)),
         };
         out.get_exposure()?;
         Ok(out)
@@ -330,8 +348,12 @@ impl AsiHandle {
             AsiError::InvalidId(_, _) => GenCamError::InvalidId(self.handle),
             _ => GenCamError::GeneralError(format!("{:?}", e)),
         })?;
-        self.icap.lock().unwrap().roi = res;
-        Ok(res)
+        if let Ok(mut roiref) = self.roi.try_borrow_mut() {
+            *roiref = res;
+            Ok(res)
+        } else {
+            Err(GenCamError::AccessViolation)
+        }
     }
 
     pub(crate) fn set_roi(&self, roi: &AsiRoi) -> Result<(), GenCamError> {
@@ -346,20 +368,49 @@ impl AsiHandle {
             }
             _ => GenCamError::GeneralError(format!("{:?}", e)),
         })?;
-        self.icap.lock().unwrap().roi = *roi;
-        Ok(())
+        if let Ok(mut roiref) = self.roi.try_borrow_mut() {
+            *roiref = *roi;
+            Ok(())
+        } else {
+            Err(GenCamError::AccessViolation)
+        }
     }
 
     pub(crate) fn get_gain(&self) -> Result<i64, GenCamError> {
         let handle = self.handle;
-        let (gain, _) = get_control_value(handle, AsiControlType::Gain)?;
-        Ok(gain)
+        if let Ok(mut gainref) = self.gain.try_borrow_mut() {
+            if let Some(gain) = *gainref {
+                Ok(gain)
+            } else {
+                let (gain, _) = get_control_value(handle, AsiControlType::Gain)?;
+                *gainref = Some(gain);
+                Ok(gain)
+            }
+        } else {
+            Err(GenCamError::AccessViolation)
+        }
     }
 
     pub(crate) fn set_gain(&self, gain: i64) -> Result<(), GenCamError> {
         let handle = self.handle;
         set_control_value(handle, AsiControlType::Gain, gain, ASI_BOOL_ASI_FALSE as _)?;
-        Ok(())
+        if let Ok(mut gainref) = self.gain.try_borrow_mut() {
+            *gainref = Some(gain);
+            Ok(())
+        } else {
+            Err(GenCamError::AccessViolation)
+        }
+    }
+
+    pub(crate) fn get_state_raw(&self) -> Result<AsiExposureStatus, GenCamError> {
+        let handle = self.handle;
+        let mut stat = Default::default();
+        ASICALL!(ASIGetExpStatus(handle, &mut stat)).map_err(|e| match e {
+            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+            AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+            _ => GenCamError::GeneralError(format!("{:?}", e)),
+        })?;
+        Ok(stat.into())
     }
 
     pub(crate) fn get_state(&self) -> Result<GenCamState, GenCamError> {
@@ -369,13 +420,7 @@ impl AsiHandle {
         if !capturing {
             return Ok(GenCamState::Idle);
         }
-        let mut stat = Default::default();
-        ASICALL!(ASIGetExpStatus(self.handle, &mut stat)).map_err(|e| match e {
-            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
-            AsiError::InvalidId(_, _) => GenCamError::InvalidId(self.handle),
-            _ => GenCamError::GeneralError(format!("{:?}", e)),
-        })?;
-        let stat: AsiExposureStatus = stat.into();
+        let stat = self.get_state_raw()?;
         match stat {
             // currently capturing, but returned idle?
             AsiExposureStatus::Idle => {
@@ -384,12 +429,15 @@ impl AsiHandle {
             }
             // currently capturing
             AsiExposureStatus::Working => {
-                if self.icap.lock().unwrap().last_exposure.is_none() {
-                    Err(GenCamError::ExposureNotStarted)
+                if let Ok(start) = self.start.read() {
+                    start
+                        .map(|t| {
+                            let elapsed = t.elapsed();
+                            GenCamState::Exposing(Some(elapsed))
+                        })
+                        .ok_or(GenCamError::ExposureNotStarted)
                 } else {
-                    let estart = self.icap.lock().unwrap().last_exposure.unwrap().start;
-                    let elapsed = estart.elapsed();
-                    Ok(GenCamState::Exposing(Some(elapsed)))
+                    Err(GenCamError::AccessViolation)
                 }
             }
             // exposure finished
@@ -408,34 +456,41 @@ impl AsiHandle {
         }
         let handle = self.handle;
         self.capturing.store(true, Ordering::SeqCst); // indicate we are capturing
+                                                      // now we are capturing
         let darkframe = if let Some(open) = (&self.shutter_open) {
             !open.load(Ordering::SeqCst)
         } else {
             false
         };
 
-        if let Ok(mut icap) = self.icap.lock() {
-            let roi = icap.roi;
-            let mut last_exposure = LastExposureInfo {
-                start: Instant::now(),
-                tstamp: SystemTime::now(),
-                exposure: Duration::from_micros(self.exposure.load(Ordering::SeqCst)),
-                darkframe,
-                gain: self.get_gain().ok(),
-            };
-            ASICALL!(ASIStartExposure(handle, to_asibool(darkframe) as _)).map_err(|e| {
-                self.capturing.store(false, Ordering::SeqCst);
-                match e {
-                    AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
-                    AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
-                    _ => GenCamError::GeneralError(format!("{:?}", e)),
-                }
-            })?;
-            icap.last_exposure = Some(last_exposure);
-            Ok(())
+        let Ok(roi) = self.roi.try_borrow() else {
+            return Err(GenCamError::AccessViolation);
+        };
+
+        let mut last_exposure = LastExposureInfo {
+            tstamp: SystemTime::now(),
+            exposure: Duration::from_micros(self.exposure.load(Ordering::SeqCst)),
+            darkframe,
+            gain: self.get_gain().ok(),
+        };
+        if let Ok(mut start) = self.start.write() {
+            *start = Some(Instant::now());
         } else {
-            panic!("Mutex poisoned");
+            Err(GenCamError::AccessViolation)?;
         }
+        ASICALL!(ASIStartExposure(handle, to_asibool(darkframe) as _)).map_err(|e| {
+            self.capturing.store(false, Ordering::SeqCst);
+            match e {
+                AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+                AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+                _ => GenCamError::GeneralError(format!("{:?}", e)),
+            }
+        })?;
+        let Ok(mut lexp) = self.last_exposure.try_borrow_mut() else {
+            return Err(GenCamError::AccessViolation);
+        };
+        *lexp = Some(last_exposure);
+        Ok(())
     }
 
     pub fn stop_exposure(&self) -> Result<(), GenCamError> {
@@ -449,11 +504,6 @@ impl AsiHandle {
             _ => GenCamError::GeneralError(format!("{:?}", e)),
         });
         self.capturing.store(false, Ordering::SeqCst);
-        if let Ok(mut icap) = self.icap.lock() {
-            icap.last_exposure = None;
-        } else {
-            panic!("Mutex poisoned");
-        }
         res
     }
 
@@ -461,52 +511,65 @@ impl AsiHandle {
         lazy_static::lazy_static! {
             static ref IMGCTR: AtomicU32 = AtomicU32::new(0);
         };
+        // check if capturing, if not return error
         if !self.capturing.load(Ordering::SeqCst) {
             return Err(GenCamError::ExposureNotStarted);
         }
+        // capturing, check state
         let handle = self.handle;
-        let state = self.get_state()?;
+        let state = self.get_state_raw()?;
         let temp = self.get_temperature().unwrap_or(-273.16);
-        let (roi, expinfo) = (if let Ok(mut icap) = self.icap.lock() {
-            match state {
-                GenCamState::Exposing(_) => Err(GenCamError::ExposureInProgress),
-                GenCamState::Idle => {
-                    self.capturing.store(false, Ordering::SeqCst);
-                    icap.last_exposure = None;
-                    Err(GenCamError::ExposureNotStarted)
-                }
-                GenCamState::Errored(e) => Err(e),
-                GenCamState::Downloading(_) => Err(GenCamError::AccessViolation),
-                GenCamState::ExposureFinished => {
-                    let now = SystemTime::now();
-                    let Some(expinfo) = icap.last_exposure.take() else {
-                        return Err(GenCamError::ExposureNotStarted);
-                    };
-                    let roi = icap.roi;
-                    let mut ptr = self.imgstor.as_mut_ptr();
-                    let len = self.imgstor.len();
-                    ASICALL!(ASIGetDataAfterExp(handle, ptr as _, len as _)).map_err(|e| {
-                        self.capturing.store(false, Ordering::SeqCst);
-                        match e {
-                            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
-                            AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
-                            AsiError::Timeout(_, _) => GenCamError::TimedOut,
-                            _ => GenCamError::GeneralError(format!("{:?}", e)),
-                        }
-                    })?;
-                    self.capturing.store(false, Ordering::SeqCst); // image has been downloaded
-                    Ok((roi, expinfo))
-                }
-                GenCamState::Unknown => Err(GenCamError::GeneralError("Unknown state".into())),
+        let roi = self
+            .roi
+            .try_borrow()
+            .map_err(|_| GenCamError::AccessViolation)?;
+        let mut expinfo = self
+            .last_exposure
+            .try_borrow_mut()
+            .map_err(|_| GenCamError::AccessViolation)?;
+        let expinfo = match state {
+            AsiExposureStatus::Working => Err(GenCamError::ExposureInProgress),
+            AsiExposureStatus::Failed => {
+                self.capturing.store(false, Ordering::SeqCst);
+                Err(GenCamError::ExposureFailed("".into()))
             }
-        } else {
-            panic!("Mutex poisoned");
-        })?;
+            AsiExposureStatus::Idle => {
+                self.capturing.store(false, Ordering::SeqCst);
+                *expinfo = None;
+                let _ = self.start
+                    .try_write()
+                    .map_err(|_| GenCamError::AccessViolation)?
+                    .take();
+                Err(GenCamError::ExposureNotStarted)
+            }
+            AsiExposureStatus::Success => {
+                let now = SystemTime::now();
+                let Some(expinfo) = expinfo.take() else {
+                    return Err(GenCamError::ExposureNotStarted);
+                };
+                let mut ptr = self.imgstor.as_mut_ptr();
+                let len = self.imgstor.len();
+                ASICALL!(ASIGetDataAfterExp(handle, ptr as _, len as _)).map_err(|e| {
+                    self.capturing.store(false, Ordering::SeqCst);
+                    match e {
+                        AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+                        AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+                        AsiError::Timeout(_, _) => GenCamError::TimedOut,
+                        _ => GenCamError::GeneralError(format!("{:?}", e)),
+                    }
+                })?;
+                self.capturing.store(false, Ordering::SeqCst); // image has been downloaded
+                Ok(expinfo)
+            }
+        }?;
+
         let width = roi.width as _;
         let height = roi.height as _;
         let ptr = &mut self.imgstor;
         let img: DynamicImageData = match (roi.fmt as u32).into() {
             GenCamPixelBpp::Bpp8 => {
+                let ptr = bytemuck::try_cast_slice_mut(ptr)
+                    .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
                 let img = ImageData::from_mut_ref(
                     &mut ptr[..(width * height)],
                     width,
@@ -514,11 +577,9 @@ impl AsiHandle {
                     refimage::ColorSpace::Gray,
                 )
                 .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
-                img.into()
+                DynamicImageData::U8(img)
             }
             GenCamPixelBpp::Bpp16 => {
-                let ptr = bytemuck::try_cast_slice_mut(ptr)
-                    .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
                 let img = ImageData::from_mut_ref(
                     &mut ptr[..(width * height)],
                     width,
@@ -592,14 +653,14 @@ impl AsiHandle {
         Ok(img)
     }
 
-    pub fn get_property(&self, prop: &GenCamCtrl) -> Result<PropertyValue, GenCamError> {
+    pub fn get_property(&self, prop: &GenCamCtrl) -> Result<(PropertyValue, bool), GenCamError> {
         if let Some((ctrl, _)) = self.caps.get(prop) {
             if ctrl == &AsiControlType::Invalid {
                 // special cases
                 match prop {
                     GenCamCtrl::Sensor(SensorCtrl::PixelFormat) => {
                         let val: GenCamPixelBpp = (self.get_roi()?.fmt as u32).into();
-                        Ok(PropertyValue::PixelFmt(val))
+                        Ok((PropertyValue::PixelFmt(val), false))
                     }
                     GenCamCtrl::Device(DeviceCtrl::Custom(name)) => {
                         if name.as_str() == "UUID" {
@@ -612,7 +673,7 @@ impl AsiHandle {
                             let id = str::from_utf8(&sn.id)
                                 .map_err(|e| GenCamError::GeneralError(format!("{:?}", e)))?
                                 .trim_end_matches(char::from(0));
-                            Ok(PropertyValue::from(id))
+                            Ok((PropertyValue::from(id), false))
                         } else {
                             Err(GenCamError::PropertyError {
                                 control: *prop,
@@ -620,9 +681,17 @@ impl AsiHandle {
                             })
                         }
                     }
+                    GenCamCtrl::Sensor(SensorCtrl::ReverseX) => {
+                        let (flipx, _) = self.get_flip()?;
+                        Ok((PropertyValue::Bool(flipx), false))
+                    }
+                    GenCamCtrl::Sensor(SensorCtrl::ReverseY) => {
+                        let (_, flipy) = self.get_flip()?;
+                        Ok((PropertyValue::Bool(flipy), false))
+                    }
                     GenCamCtrl::Sensor(SensorCtrl::ShutterMode) => {
                         if let Some(open) = &self.shutter_open {
-                            Ok(PropertyValue::Bool(open.load(Ordering::SeqCst)))
+                            Ok((PropertyValue::Bool(open.load(Ordering::SeqCst)), false))
                         } else {
                             Err(GenCamError::PropertyError {
                                 control: *prop,
@@ -637,28 +706,15 @@ impl AsiHandle {
                 }
             } else {
                 let handle = self.handle;
-                let (val, _) = get_control_value(handle, *ctrl)?;
-                Ok(PropertyValue::from(val))
-            }
-        } else {
-            Err(GenCamError::PropertyError {
-                control: *prop,
-                error: PropertyError::NotFound,
-            })
-        }
-    }
-
-    pub fn get_property_auto(&self, prop: &GenCamCtrl) -> Result<bool, GenCamError> {
-        if let Some((ctrl, _)) = self.caps.get(prop) {
-            if ctrl != &AsiControlType::Invalid {
-                let handle = self.handle;
-                let (_, auto) = get_control_value(handle, *ctrl)?;
-                Ok(auto == ASI_BOOL_ASI_TRUE as _)
-            } else {
-                Err(GenCamError::PropertyError {
-                    control: *prop,
-                    error: PropertyError::NotFound,
-                })
+                let (val, auto) = get_control_value(handle, *ctrl)?;
+                if ctrl == AsiControlType::Temperature {
+                    Ok((
+                        PropertyValue::from(val as f32 * 0.1),
+                        auto == ASI_BOOL_ASI_TRUE as _,
+                    ))
+                } else {
+                    Ok((PropertyValue::from(val), auto == ASI_BOOL_ASI_TRUE as _))
+                }
             }
         } else {
             Err(GenCamError::PropertyError {
@@ -672,7 +728,13 @@ impl AsiHandle {
         &self,
         prop: &GenCamCtrl,
         value: &PropertyValue,
+        auto: bool,
     ) -> Result<(), GenCamError> {
+        let auto = if auto {
+            ASI_BOOL_ASI_TRUE as _
+        } else {
+            ASI_BOOL_ASI_FALSE as _
+        };
         if let Some((ctrl, lims)) = self.caps.get(prop) {
             if ctrl == &AsiControlType::Invalid {
                 // special cases
@@ -684,29 +746,48 @@ impl AsiHandle {
                                 error: e,
                             })?;
                         if let PropertyValue::PixelFmt(fmt) = value {
-                            let fmt = (*fmt).into();
+                            if self.capturing.load(Ordering::SeqCst) {
+                                return Err(GenCamError::ExposureInProgress);
+                            }
                             let mut roi = self.get_roi()?;
+                            let fmt = match fmt {
+                                GenCamPixelBpp::Bpp8 => ASI_IMG_TYPE_ASI_IMG_RAW8,
+                                GenCamPixelBpp::Bpp16 => ASI_IMG_TYPE_ASI_IMG_RAW16,
+                                _ => {
+                                    return Err(GenCamError::PropertyError {
+                                        control: *prop,
+                                        error: PropertyError::ValueNotSupported,
+                                    })
+                                }
+                            };
+                            roi.fmt = fmt as _;
                             self.set_roi(&roi)?;
                             Ok(())
                         } else {
                             Err(GenCamError::PropertyError {
                                 control: *prop,
-                                error: PropertyError::InvalidValue,
+                                error: PropertyError::ValueNotSupported,
                             })
                         }
                     }
                     GenCamCtrl::Device(DeviceCtrl::Custom(name)) => {
                         if name.as_str() == "UUID" {
                             let mut sn = Default::default();
-                            ASICALL!(ASIGetID(self.handle, &mut sn)).map_err(|e| match e {
+                            let value: String = value
+                                .try_into()
+                                .map_err(|e| GenCamError::PropertyError {
+                                    control: *prop,
+                                    error: e,
+                                })?;
+
+                            let len = value.len().min(8);
+                            sn.id[..len].copy_from_slice(&value.as_bytes()[..len]);
+                            
+                            ASICALL!(ASISetID(self.handle, &mut sn)).map_err(|e| match e {
                                 AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
                                 AsiError::InvalidId(_, _) => GenCamError::InvalidId(self.handle),
                                 _ => GenCamError::GeneralError(format!("{:?}", e)),
-                            })?;
-                            let id = str::from_utf8(&sn.id)
-                                .map_err(|e| GenCamError::GeneralError(format!("{:?}", e)))?
-                                .trim_end_matches(char::from(0));
-                            Ok(PropertyValue::from(id))
+                            })
                         } else {
                             Err(GenCamError::PropertyError {
                                 control: *prop,
@@ -715,8 +796,17 @@ impl AsiHandle {
                         }
                     }
                     GenCamCtrl::Sensor(SensorCtrl::ShutterMode) => {
+                        if self.capturing.load(Ordering::SeqCst) {
+                            return Err(GenCamError::ExposureInProgress);
+                        }
+                        let val = value.try_into().map_err(|e| GenCamError::PropertyError {
+                            control: *prop,
+                            error: e,
+                        })?;
+
                         if let Some(open) = &self.shutter_open {
-                            Ok(PropertyValue::Bool(open.load(Ordering::SeqCst)))
+                            open.store(val, Ordering::SeqCst);
+                            Ok(())
                         } else {
                             Err(GenCamError::PropertyError {
                                 control: *prop,
@@ -730,7 +820,63 @@ impl AsiHandle {
                     }),
                 }
             } else {
-                todo!()
+                let handle = self.handle;
+                match ctrl {
+                    AsiControlType::Gain | AsiControlType::Gamma => {
+                        if self.capturing.load(Ordering::SeqCst) {
+                            Err(GenCamError::ExposureInProgress)
+                        } else {
+                            let val = value.try_into().map_err(|e| GenCamError::PropertyError {
+                                control: *prop,
+                                error: e,
+                            })?;
+                            set_control_value(handle, *ctrl, val, auto as _)
+                        }
+                    }
+                    AsiControlType::Flip => {
+                        let (mut flipx, mut flipy) = self.get_flip()?;
+                        let val = value.try_into().map_err(|e| GenCamError::PropertyError {
+                            control: *prop,
+                            error: e,
+                        })?;
+                        match prop {
+                            GenCamCtrl::Sensor(SensorCtrl::ReverseX) => flipx = val,
+                            GenCamCtrl::Sensor(SensorCtrl::ReverseY) => flipy = val,
+                            _ => {
+                                return Err(GenCamError::PropertyError {
+                                    control: *prop,
+                                    error: PropertyError::NotFound,
+                                })
+                            }
+                        }
+                        self.set_flip(flipx, flipy)
+                    }
+                    AsiControlType::Temperature => {
+                        let val: f64 =
+                            value.try_into().map_err(|e| GenCamError::PropertyError {
+                                control: *prop,
+                                error: e,
+                            })?;
+                        let val = (val * 10.0f64) as _;
+                        set_control_value(handle, *ctrl, val, auto as _)
+                    }
+                    AsiControlType::AutoExpMax
+                    | AsiControlType::AutoExpTarget
+                    | AsiControlType::AutoExpMaxGain
+                    | AsiControlType::HighSpeedMode
+                    | AsiControlType::CoolerPowerPercent
+                    | AsiControlType::TargetTemp => {
+                        let val = value.try_into().map_err(|e| GenCamError::PropertyError {
+                            control: *prop,
+                            error: e,
+                        })?;
+                        set_control_value(handle, *ctrl, val, auto as _)
+                    }
+                    _ => Err(GenCamError::PropertyError {
+                        control: *prop,
+                        error: PropertyError::NotFound,
+                    }),
+                }
             }
         } else {
             Err(GenCamError::PropertyError {
@@ -738,5 +884,56 @@ impl AsiHandle {
                 error: PropertyError::NotFound,
             })
         }
+    }
+
+    fn get_flip(&self) -> Result<(bool, bool), GenCamError> {
+        let handle = self.handle;
+        let mut flip = Default::default();
+        let mut auto = Default::default();
+        ASICALL!(ASIGetControlValue(
+            handle,
+            ASI_CONTROL_TYPE_ASI_FLIP,
+            &mut flip,
+            &mut auto
+        ))
+        .map_err(|e| match e {
+            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+            AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+            AsiError::InvalidControlType(src, args) => {
+                GenCamError::InvalidControlType(format!("{src:?}(args: {args:?})"))
+            }
+            _ => GenCamError::GeneralError(format!("{:?}", e)),
+        })?;
+        Ok(match flip {
+            ASI_FLIP_STATUS_ASI_FLIP_NONE => (false, false),
+            ASI_FLIP_STATUS_ASI_FLIP_HORIZ => (true, false),
+            ASI_FLIP_STATUS_ASI_FLIP_VERT => (false, true),
+            ASI_FLIP_STATUS_ASI_FLIP_BOTH => (true, true),
+        })
+    }
+
+    fn set_flip(&self, flipx: bool, flipy: bool) -> Result<(), GenCamError> {
+        let handle = self.handle;
+        let flip = match (flipx, flipy) {
+            (false, false) => ASI_FLIP_STATUS_ASI_FLIP_NONE,
+            (true, false) => ASI_FLIP_STATUS_ASI_FLIP_HORIZ,
+            (false, true) => ASI_FLIP_STATUS_ASI_FLIP_VERT,
+            (true, true) => ASI_FLIP_STATUS_ASI_FLIP_BOTH,
+        };
+        ASICALL!(ASISetControlValue(
+            handle,
+            ASI_CONTROL_TYPE_ASI_FLIP,
+            flip,
+            ASI_BOOL_ASI_FALSE as i32
+        ))
+        .map_err(|e| match e {
+            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+            AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+            AsiError::InvalidControlType(src, args) => {
+                GenCamError::InvalidControlType(format!("{src:?}(args: {args:?})"))
+            }
+            _ => GenCamError::GeneralError(format!("{:?}", e)),
+        })?;
+        Ok(())
     }
 }

@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, os::raw, time::Duration};
 
 use generic_camera::{
     AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError,
-    GenCamPixelBpp, Property, PropertyLims,
+    GenCamPixelBpp, Property, PropertyLims, SensorCtrl,
 };
 
 use crate::zwo_ffi::*;
@@ -16,10 +16,18 @@ macro_rules! ASICALL {
             #[allow(clippy::macro_metavars_in_unsafe)]
             let res = unsafe { $func($($arg),*) };
             if res != $crate::zwo_ffi::ASI_ERROR_CODE_ASI_SUCCESS as _ {
-                let args = vec![$(stringify!($arg)),*];
-                let args = args.join(", ");
-                let err = $crate::zwo_ffi_wrapper::AsiError::from((res as u32, Some(stringify!($func)), Some(args.as_str())));
-                log::warn!("Error calling {}", err);
+                #[cfg(debug_assertions)]
+                let err = {
+                    let args = vec![$(stringify!($arg)),*];
+                    let args = args.join(", ");
+                    let err = $crate::zwo_ffi_wrapper::AsiError::from((res as u32, Some(stringify!($func)), Some(args.as_str())));
+                    log::warn!("Error calling {}", err);
+                    err
+                };
+                #[cfg(not(debug_assertions))]
+                let err = {
+                    $crate::zwo_ffi_wrapper::AsiError::from((res as u32, Some(stringify!($func)), None))
+                };
                 return Err(err);
             }
             Ok(())
@@ -207,134 +215,154 @@ pub fn get_bins(list: &[i32], end: i32) -> Vec<u64> {
         .collect()
 }
 
-pub(crate) fn map_control_cap(obj: &ASI_CONTROL_CAPS) -> Option<(GenCamCtrl, (AsiControlType, Property))> {
+pub(crate) fn map_control_cap(
+    obj: &ASI_CONTROL_CAPS,
+) -> Option<(GenCamCtrl, (AsiControlType, Property))> {
     use AsiControlType::*;
     match obj.ControlType.into() {
         Gain => Some((
             AnalogCtrl::Gain.into(),
-            (Gain,
-            Property::new(
-                PropertyLims::Int {
-                    min: obj.MinValue,
-                    max: obj.MaxValue,
-                    step: 1,
-                    default: obj.DefaultValue,
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                Gain,
+                Property::new(
+                    PropertyLims::Int {
+                        min: obj.MinValue,
+                        max: obj.MaxValue,
+                        step: 1,
+                        default: obj.DefaultValue,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         Gamma => Some((
             AnalogCtrl::Gamma.into(),
-            (Gamma,
-            Property::new(
-                PropertyLims::Int {
-                    min: obj.MinValue,
-                    max: obj.MaxValue,
-                    step: 1,
-                    default: obj.DefaultValue,
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                Gamma,
+                Property::new(
+                    PropertyLims::Int {
+                        min: obj.MinValue,
+                        max: obj.MaxValue,
+                        step: 1,
+                        default: obj.DefaultValue,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         Temperature => Some((
             DeviceCtrl::Temperature.into(),
-            (Temperature,
-            Property::new(
-                PropertyLims::Float {
-                    min: obj.MinValue as f64 / 10.0,
-                    max: obj.MaxValue as f64 / 10.0,
-                    step: 0.1,
-                    default: obj.DefaultValue as f64 / 10.0,
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                Temperature,
+                Property::new(
+                    PropertyLims::Float {
+                        min: obj.MinValue as f64 / 10.0,
+                        max: obj.MaxValue as f64 / 10.0,
+                        step: 0.1,
+                        default: obj.DefaultValue as f64 / 10.0,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         AutoExpMax => Some((
             ExposureCtrl::ExposureTime.into(),
-            (AutoExpMax,
-            Property::new(
-                PropertyLims::Duration {
-                    min: Duration::from_micros(obj.MinValue as _),
-                    max: Duration::from_micros(obj.MaxValue as _),
-                    step: Duration::from_micros(1),
-                    default: Duration::from_micros(obj.DefaultValue as _),
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                AutoExpMax,
+                Property::new(
+                    PropertyLims::Duration {
+                        min: Duration::from_micros(obj.MinValue as _),
+                        max: Duration::from_micros(obj.MaxValue as _),
+                        step: Duration::from_micros(1),
+                        default: Duration::from_micros(obj.DefaultValue as _),
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         AutoExpTarget => Some((
             ExposureCtrl::AutoTargetBrightness.into(),
-            (AutoExpTarget,
-            Property::new(
-                PropertyLims::Int {
-                    min: obj.MinValue,
-                    max: obj.MaxValue,
-                    step: 1,
-                    default: obj.DefaultValue,
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                AutoExpTarget,
+                Property::new(
+                    PropertyLims::Int {
+                        min: obj.MinValue,
+                        max: obj.MaxValue,
+                        step: 1,
+                        default: obj.DefaultValue,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         AutoExpMaxGain => Some((
             AnalogCtrl::Gain.into(),
-            (AutoExpMaxGain,
-            Property::new(
-                PropertyLims::Int {
-                    min: obj.MinValue,
-                    max: obj.MaxValue,
-                    step: 1,
-                    default: obj.DefaultValue,
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                AutoExpMaxGain,
+                Property::new(
+                    PropertyLims::Int {
+                        min: obj.MinValue,
+                        max: obj.MaxValue,
+                        step: 1,
+                        default: obj.DefaultValue,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         HighSpeedMode => Some((
             DeviceCtrl::HighSpeedMode.into(),
-            (HighSpeedMode,
-            Property::new(
-                PropertyLims::Int {
-                    min: obj.MinValue,
-                    max: obj.MaxValue,
-                    step: 1,
-                    default: obj.DefaultValue,
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                HighSpeedMode,
+                Property::new(
+                    PropertyLims::Int {
+                        min: obj.MinValue,
+                        max: obj.MaxValue,
+                        step: 1,
+                        default: obj.DefaultValue,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         CoolerPowerPercent => Some((
             DeviceCtrl::CoolerPower.into(),
-            (CoolerPowerPercent,
-            Property::new(
-                PropertyLims::Int {
-                    min: obj.MinValue,
-                    max: obj.MaxValue,
-                    step: 1,
-                    default: obj.DefaultValue,
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                CoolerPowerPercent,
+                Property::new(
+                    PropertyLims::Int {
+                        min: obj.MinValue,
+                        max: obj.MaxValue,
+                        step: 1,
+                        default: obj.DefaultValue,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         TargetTemp => Some((
             DeviceCtrl::CoolerTemp.into(),
-            (TargetTemp,
-            Property::new(
-                PropertyLims::Int {
-                    min: obj.MinValue,
-                    max: obj.MaxValue,
-                    step: 1,
-                    default: obj.DefaultValue,
-                },
-                obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-            ),)
+            (
+                TargetTemp,
+                Property::new(
+                    PropertyLims::Int {
+                        min: obj.MinValue,
+                        max: obj.MaxValue,
+                        step: 1,
+                        default: obj.DefaultValue,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
         )),
         _ => None,
     }
