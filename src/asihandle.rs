@@ -16,16 +16,7 @@ use std::{
 
 use crate::{
     zwo_ffi::{
-        ASICloseCamera, ASIGetCameraProperty, ASIGetCameraPropertyByID, ASIGetControlCaps,
-        ASIGetControlValue, ASIGetDataAfterExp, ASIGetExpStatus, ASIGetID,
-        ASIGetNumOfConnectedCameras, ASIGetNumOfControls, ASIGetSerialNumber, ASIInitCamera,
-        ASIOpenCamera, ASISetControlValue, ASIStartExposure, ASIStopExposure,
-        ASI_BAYER_PATTERN_ASI_BAYER_BG, ASI_BAYER_PATTERN_ASI_BAYER_GB,
-        ASI_BAYER_PATTERN_ASI_BAYER_GR, ASI_BAYER_PATTERN_ASI_BAYER_RG, ASI_BOOL_ASI_FALSE,
-        ASI_BOOL_ASI_TRUE, ASI_CAMERA_INFO, ASI_CONTROL_CAPS, ASI_CONTROL_TYPE_ASI_COOLER_ON,
-        ASI_CONTROL_TYPE_ASI_FLIP, ASI_FLIP_STATUS_ASI_FLIP_BOTH, ASI_FLIP_STATUS_ASI_FLIP_HORIZ,
-        ASI_FLIP_STATUS_ASI_FLIP_NONE, ASI_FLIP_STATUS_ASI_FLIP_VERT, ASI_ID, ASI_IMG_TYPE,
-        ASI_IMG_TYPE_ASI_IMG_END, ASI_IMG_TYPE_ASI_IMG_RAW16, ASI_IMG_TYPE_ASI_IMG_RAW8,
+        ASICloseCamera, ASIGetCameraProperty, ASIGetCameraPropertyByID, ASIGetControlCaps, ASIGetControlValue, ASIGetDataAfterExp, ASIGetExpStatus, ASIGetID, ASIGetNumOfConnectedCameras, ASIGetNumOfControls, ASIGetSerialNumber, ASIInitCamera, ASIOpenCamera, ASISetControlValue, ASISetID, ASIStartExposure, ASIStopExposure, ASI_BAYER_PATTERN_ASI_BAYER_BG, ASI_BAYER_PATTERN_ASI_BAYER_GB, ASI_BAYER_PATTERN_ASI_BAYER_GR, ASI_BAYER_PATTERN_ASI_BAYER_RG, ASI_BOOL_ASI_FALSE, ASI_BOOL_ASI_TRUE, ASI_CAMERA_INFO, ASI_CONTROL_CAPS, ASI_CONTROL_TYPE_ASI_COOLER_ON, ASI_CONTROL_TYPE_ASI_FLIP, ASI_FLIP_STATUS_ASI_FLIP_BOTH, ASI_FLIP_STATUS_ASI_FLIP_HORIZ, ASI_FLIP_STATUS_ASI_FLIP_NONE, ASI_FLIP_STATUS_ASI_FLIP_VERT, ASI_ID, ASI_IMG_TYPE, ASI_IMG_TYPE_ASI_IMG_END, ASI_IMG_TYPE_ASI_IMG_RAW16, ASI_IMG_TYPE_ASI_IMG_RAW8
     },
     zwo_ffi_wrapper::{
         get_bins, get_control_value, get_pixfmt, map_control_cap, set_control_value,
@@ -35,8 +26,7 @@ use crate::{
 };
 
 use generic_camera::{
-    AnalogCtrl, CustomName, DeviceCtrl, DigitalIoCtrl, ExposureCtrl, GenCam, GenCamCtrl,
-    PropertyError, PropertyValue, SensorCtrl,
+    AnalogCtrl, CustomName, DeviceCtrl, DigitalIoCtrl, ExposureCtrl, GenCam, GenCamCtrl, GenCamResult, PropertyError, PropertyValue, SensorCtrl
 };
 use generic_camera::{
     GenCamDescriptor, GenCamError, GenCamPixelBpp, GenCamRoi, GenCamState, Property, PropertyLims,
@@ -302,7 +292,7 @@ impl AsiHandle {
             last_exposure: RefCell::new(None),
             info: Arc::new(info),
             gain: RefCell::new(None),
-            imgstor: vec![0u16; (roi.MaxHeight * roi.MaxWidth) as _],
+            imgstor: vec![0u16; (info.MaxHeight * info.MaxWidth) as _],
             start: Arc::new(RwLock::new(None)),
         };
         out.get_exposure()?;
@@ -334,11 +324,11 @@ impl AsiHandle {
     }
 
     /// Get exposure from device and update internal state
-    pub(crate) fn get_exposure(&self) -> Result<(), GenCamError> {
+    pub(crate) fn get_exposure(&self) -> Result<Duration, GenCamError> {
         let handle = self.handle;
         let (exposure, _) = get_control_value(handle, AsiControlType::Exposure)?;
         self.exposure.store(exposure as _, Ordering::SeqCst);
-        Ok(())
+        Ok(Duration::from_micros(exposure as _))
     }
 
     /// Get ROI from device and update internal state
@@ -707,9 +697,9 @@ impl AsiHandle {
             } else {
                 let handle = self.handle;
                 let (val, auto) = get_control_value(handle, *ctrl)?;
-                if ctrl == AsiControlType::Temperature {
+                if ctrl == &AsiControlType::Temperature {
                     Ok((
-                        PropertyValue::from(val as f32 * 0.1),
+                        PropertyValue::from(val as f64 * 0.1),
                         auto == ASI_BOOL_ASI_TRUE as _,
                     ))
                 } else {
@@ -730,7 +720,7 @@ impl AsiHandle {
         value: &PropertyValue,
         auto: bool,
     ) -> Result<(), GenCamError> {
-        let auto = if auto {
+        let auto: i32 = if auto {
             ASI_BOOL_ASI_TRUE as _
         } else {
             ASI_BOOL_ASI_FALSE as _
@@ -772,7 +762,7 @@ impl AsiHandle {
                     }
                     GenCamCtrl::Device(DeviceCtrl::Custom(name)) => {
                         if name.as_str() == "UUID" {
-                            let mut sn = Default::default();
+                            let mut sn: ASI_ID = Default::default();
                             let value: String = value
                                 .try_into()
                                 .map_err(|e| GenCamError::PropertyError {
@@ -783,7 +773,7 @@ impl AsiHandle {
                             let len = value.len().min(8);
                             sn.id[..len].copy_from_slice(&value.as_bytes()[..len]);
                             
-                            ASICALL!(ASISetID(self.handle, &mut sn)).map_err(|e| match e {
+                            ASICALL!(ASISetID(self.handle, sn)).map_err(|e| match e {
                                 AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
                                 AsiError::InvalidId(_, _) => GenCamError::InvalidId(self.handle),
                                 _ => GenCamError::GeneralError(format!("{:?}", e)),
@@ -892,7 +882,7 @@ impl AsiHandle {
         let mut auto = Default::default();
         ASICALL!(ASIGetControlValue(
             handle,
-            ASI_CONTROL_TYPE_ASI_FLIP,
+            ASI_CONTROL_TYPE_ASI_FLIP as _,
             &mut flip,
             &mut auto
         ))
@@ -904,11 +894,18 @@ impl AsiHandle {
             }
             _ => GenCamError::GeneralError(format!("{:?}", e)),
         })?;
+        let flip = flip as _;
         Ok(match flip {
             ASI_FLIP_STATUS_ASI_FLIP_NONE => (false, false),
             ASI_FLIP_STATUS_ASI_FLIP_HORIZ => (true, false),
             ASI_FLIP_STATUS_ASI_FLIP_VERT => (false, true),
             ASI_FLIP_STATUS_ASI_FLIP_BOTH => (true, true),
+            _ => {
+                return Err(GenCamError::GeneralError(format!(
+                    "ASI: Invalid flip status: {}",
+                    flip
+                )))
+            }
         })
     }
 
@@ -922,8 +919,8 @@ impl AsiHandle {
         };
         ASICALL!(ASISetControlValue(
             handle,
-            ASI_CONTROL_TYPE_ASI_FLIP,
-            flip,
+            ASI_CONTROL_TYPE_ASI_FLIP as _,
+            flip as _,
             ASI_BOOL_ASI_FALSE as i32
         ))
         .map_err(|e| match e {
@@ -935,5 +932,13 @@ impl AsiHandle {
             _ => GenCamError::GeneralError(format!("{:?}", e)),
         })?;
         Ok(())
+    }
+
+    pub fn image_ready(&self) -> GenCamResult<bool> {
+        if !self.capturing.load(Ordering::SeqCst) {
+            Err(GenCamError::ExposureNotStarted)
+        } else {
+            Ok(self.get_state_raw()? == AsiExposureStatus::Success)
+        }
     }
 }

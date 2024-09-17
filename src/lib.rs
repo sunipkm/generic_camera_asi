@@ -1,5 +1,6 @@
 #![cfg(not(windows))]
 mod asicamera_2;
+mod asicamera2;
 mod asihandle;
 mod zwo_ffi;
 #[macro_use]

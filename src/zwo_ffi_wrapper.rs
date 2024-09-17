@@ -2,7 +2,7 @@ use std::{collections::HashMap, fmt::Display, os::raw, time::Duration};
 
 use generic_camera::{
     AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError,
-    GenCamPixelBpp, Property, PropertyLims, SensorCtrl,
+    GenCamPixelBpp, Property, PropertyLims,
 };
 
 use crate::zwo_ffi::*;
@@ -571,6 +571,7 @@ impl Display for AsiError {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AsiExposureStatus {
     Idle = ASI_EXPOSURE_STATUS_ASI_EXP_IDLE as _,
     Working = ASI_EXPOSURE_STATUS_ASI_EXP_WORKING as _,
