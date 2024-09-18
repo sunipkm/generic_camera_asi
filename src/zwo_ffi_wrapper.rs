@@ -60,6 +60,7 @@ impl Default for ASI_CAMERA_INFO {
     }
 }
 
+#[allow(clippy::derivable_impls)]
 impl Default for ASI_ID {
     fn default() -> Self {
         Self {
@@ -402,10 +403,11 @@ impl AsiRoi {
             width,
             height,
             bin,
+            #[allow(clippy::useless_conversion)]
             fmt: fmt.into(),
         })
     }
-
+    
     /// Set the ROI
     pub(crate) fn set(&self, handle: i32) -> Result<(), AsiError> {
         ASICALL!(ASISetStartPos(handle, self.x, self.y))?;
@@ -414,7 +416,7 @@ impl AsiRoi {
             self.width,
             self.height,
             self.bin,
-            self.fmt as i32
+            self.fmt as _
         ))?;
         Ok(())
     }

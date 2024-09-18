@@ -1,31 +1,34 @@
 #![warn(missing_docs)]
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 
-use generic_camera::{GenCam, GenCamCtrl, GenCamError, GenCamResult};
+use generic_camera::{GenCam, GenCamCtrl, GenCamError, GenCamResult, Property};
 use refimage::GenericImage;
 
 use crate::asihandle::AsiHandle;
 
 /// Generic camera control for ASI cameras.
 #[derive(Debug)]
-pub struct GenCamAsi(AsiHandle);
+pub struct GenCamAsi {
+    handle: AsiHandle,
+    caps: HashMap<GenCamCtrl, Property>,
+}
 
 impl GenCam for GenCamAsi {
     fn set_exposure(&mut self, exposure: std::time::Duration) -> GenCamResult<Duration> {
-        self.0.set_exposure(exposure)?;
-        self.0.get_exposure()
+        self.handle.set_exposure(exposure)?;
+        self.handle.get_exposure()
     }
 
     fn start_exposure(&mut self) -> GenCamResult<()> {
-        self.0.start_exposure()
+        self.handle.start_exposure()
     }
 
     fn image_ready(&self) -> GenCamResult<bool> {
-        self.0.image_ready()
+        self.handle.image_ready()
     }
 
     fn download_image(&mut self) -> GenCamResult<GenericImage> {
-        self.0.download_image()
+        self.handle.download_image()
     }
     
     fn info_handle(&self) -> Option<generic_camera::AnyGenCamInfo> {
@@ -41,7 +44,7 @@ impl GenCam for GenCamAsi {
     }
     
     fn camera_name(&self) -> &str {
-        todo!()
+        self.handle.camera_name()
     }
     
     fn list_properties(&self) -> &std::collections::HashMap<GenCamCtrl, generic_camera::Property> {

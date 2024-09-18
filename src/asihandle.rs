@@ -26,7 +26,7 @@ use crate::{
 };
 
 use generic_camera::{
-    AnalogCtrl, CustomName, DeviceCtrl, DigitalIoCtrl, ExposureCtrl, GenCam, GenCamCtrl, GenCamResult, PropertyError, PropertyValue, SensorCtrl
+    AnalogCtrl, CustomName, DeviceCtrl, DigitalIoCtrl, ExposureCtrl, GenCam, GenCamCtrl, GenCamInfo, GenCamResult, PropertyError, PropertyValue, SensorCtrl
 };
 use generic_camera::{
     GenCamDescriptor, GenCamError, GenCamPixelBpp, GenCamRoi, GenCamState, Property, PropertyLims,
@@ -37,11 +37,9 @@ use refimage::{DynamicImageData, GenericImage, ImageData};
 
 pub(crate) fn get_asi_devs() -> Result<Vec<GenCamDescriptor>, AsiError> {
     fn get_sn(handle: i32) -> Option<String> {
-        ASICALL!(ASIOpenCamera(handle)).ok()?;
         let mut sn = ASI_ID::default();
         ASICALL!(ASIGetSerialNumber(handle, &mut sn as _)).ok()?;
         let ret = unsafe { ASIGetSerialNumber(handle, &mut sn as _) };
-        unsafe { ASICloseCamera(handle) };
         let sn = sn
             .id
             .iter()
@@ -54,6 +52,9 @@ pub(crate) fn get_asi_devs() -> Result<Vec<GenCamDescriptor>, AsiError> {
     for id in 0..num_cameras {
         let mut dev = ASI_CAMERA_INFO::default();
         if ASICALL!(ASIGetCameraProperty(&mut dev, id)).is_err() {
+            continue;
+        }
+        if ASICALL!(ASIOpenCamera(dev.CameraID)).is_err() {
             continue;
         }
         let sn = get_sn(dev.CameraID).unwrap_or("Unknown".into());
@@ -90,17 +91,28 @@ pub(crate) struct AsiHandle {
     serial: [u8; 16],
     name: [u8; 20],
     bayer: Option<[u8; 4]>, // Bayer pattern
-    has_cooler: bool,
-    shutter_open: Option<Arc<AtomicBool>>,
-    capturing: Arc<AtomicBool>,
+    shutter_open: Option<AtomicBool>, // Shutter open/closed not available on GenCamInfo
     exposure: AtomicU64,
     gain: RefCell<Option<i64>>,
-    info: Arc<ASI_CAMERA_INFO>, // cloned to GenCamInfo
-    caps: Box<HashMap<GenCamCtrl, (AsiControlType, Property)>>, // truncated and copied to GenCamInfo
     roi: RefCell<AsiRoi>,
     last_exposure: RefCell<Option<LastExposureInfo>>,
-    start: Arc<RwLock<Option<Instant>>>,
     imgstor: Vec<u16>,
+    rawcaps: Arc<HashMap<GenCamCtrl, (AsiControlType, Property)>>, // truncated and copied to GenCamInfo
+    has_cooler: bool,
+    capturing: Arc<AtomicBool>,
+    info: Arc<GenCamDescriptor>, // cloned to GenCamInfo
+    start: Arc<RwLock<Option<Instant>>>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AsiInfo {
+    pub serial: [u8; 16],
+    pub name: [u8; 20],
+    pub has_cooler: bool,
+    pub capturing: Arc<AtomicBool>,
+    pub caps: HashMap<GenCamCtrl, Property>,
+    pub info: Arc<GenCamDescriptor>,
+    pub start: Arc<RwLock<Option<Instant>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -166,7 +178,7 @@ pub(crate) fn get_control_caps(handle: i32) -> Result<Vec<ASI_CONTROL_CAPS>, Gen
 impl AsiHandle {
     /// Create a new AsiHandle from a camera handle
     /// Removed binning support for now
-    pub(crate) fn new(handle: i32) -> Result<Self, GenCamError> {
+    pub(crate) fn new(handle: i32, ginfo: &GenCamDescriptor) -> Result<Self, GenCamError> {
         ASICALL!(ASIOpenCamera(handle)).map_err(|e| match e {
             AsiError::CameraRemoved(_, _) => GenCamError::CameraRemoved,
             AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
@@ -281,16 +293,16 @@ impl AsiHandle {
             bayer,
             has_cooler: info.IsCoolerCam == ASI_BOOL_ASI_TRUE as _,
             shutter_open: if info.MechanicalShutter == ASI_BOOL_ASI_TRUE as _ {
-                Some(Arc::new(AtomicBool::new(false)))
+                Some(AtomicBool::new(false))
             } else {
                 None
             },
             capturing: Arc::new(AtomicBool::new(false)),
-            caps: Box::new(caps),
+            rawcaps: Arc::new(caps),
             exposure: AtomicU64::new(0),
             roi: RefCell::new(roi),
             last_exposure: RefCell::new(None),
-            info: Arc::new(info),
+            info: Arc::new(ginfo.clone()),
             gain: RefCell::new(None),
             imgstor: vec![0u16; (info.MaxHeight * info.MaxWidth) as _],
             start: Arc::new(RwLock::new(None)),
@@ -644,7 +656,7 @@ impl AsiHandle {
     }
 
     pub fn get_property(&self, prop: &GenCamCtrl) -> Result<(PropertyValue, bool), GenCamError> {
-        if let Some((ctrl, _)) = self.caps.get(prop) {
+        if let Some((ctrl, _)) = self.rawcaps.get(prop) {
             if ctrl == &AsiControlType::Invalid {
                 // special cases
                 match prop {
@@ -725,7 +737,7 @@ impl AsiHandle {
         } else {
             ASI_BOOL_ASI_FALSE as _
         };
-        if let Some((ctrl, lims)) = self.caps.get(prop) {
+        if let Some((ctrl, lims)) = self.rawcaps.get(prop) {
             if ctrl == &AsiControlType::Invalid {
                 // special cases
                 match prop {
@@ -940,5 +952,11 @@ impl AsiHandle {
         } else {
             Ok(self.get_state_raw()? == AsiExposureStatus::Success)
         }
+    }
+
+    pub fn camera_name(&self) -> &str {
+        str::from_utf8(&self.name)
+            .unwrap_or("")
+            .trim_end_matches(char::from(0))
     }
 }
