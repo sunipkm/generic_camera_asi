@@ -1,15 +1,35 @@
 #![warn(missing_docs)]
-use std::{collections::HashMap, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use generic_camera::{
-    GenCam, GenCamCtrl, GenCamDriver, GenCamError, GenCamResult, Property, PropertyValue
+    GenCam, GenCamCtrl, GenCamDriver, GenCamError, GenCamResult, Property, PropertyValue,
 };
 use refimage::GenericImage;
 
-use crate::{asihandle::{get_asi_devs, open_device, AsiImager}, open_camera, zwo_ffi::ASIGetNumOfConnectedCameras, zwo_ffi_wrapper::AsiError, ASICALL};
+use crate::{
+    asihandle::{get_asi_devs, open_device, AsiImager},
+    zwo_ffi::ASIGetNumOfConnectedCameras,
+    zwo_ffi_wrapper::AsiError,
+};
 
 #[derive(Debug, Default)]
-pub struct GenCamDriverAsi {}
+/// [`GenCamDriver`] implementation for ASI cameras.
+///
+/// This struct is used to list and connect to ASI cameras.
+///
+/// # Examples
+/// ```
+/// use generic_camera::GenCamDriver;
+/// use generic_camera_asi::GenCamDriverAsi;
+///
+/// let mut driver = GenCamDriverAsi::default();
+/// let num_devices = driver.available_devices();
+/// if num_devices > 0 {
+///     let devices = driver.list_devices();
+///     let first_device = driver.connect_first_device();
+/// }
+/// ```
+pub struct GenCamDriverAsi;
 
 impl GenCamDriver for GenCamDriverAsi {
     fn available_devices(&self) -> usize {
@@ -18,17 +38,18 @@ impl GenCamDriver for GenCamDriverAsi {
     }
 
     fn list_devices(&mut self) -> GenCamResult<Vec<generic_camera::GenCamDescriptor>> {
-        get_asi_devs().map_err(|e| {
-            match e {
-                AsiError::InvalidId(_,_) => GenCamError::InvalidIndex(0),
-                AsiError::CameraRemoved(_,_) => GenCamError::CameraRemoved,
-                AsiError::CameraClosed(_,_) => GenCamError::CameraClosed,
-                _ => GenCamError::GeneralError(format!("{:?}", e))
-            }
+        get_asi_devs().map_err(|e| match e {
+            AsiError::InvalidId(_, _) => GenCamError::InvalidIndex(0),
+            AsiError::CameraRemoved(_, _) => GenCamError::CameraRemoved,
+            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+            _ => GenCamError::GeneralError(format!("{:?}", e)),
         })
     }
 
-    fn connect_device(&mut self, descriptor: &generic_camera::GenCamDescriptor) -> GenCamResult<generic_camera::AnyGenCam> {
+    fn connect_device(
+        &mut self,
+        descriptor: &generic_camera::GenCamDescriptor,
+    ) -> GenCamResult<generic_camera::AnyGenCam> {
         let handle = open_device(descriptor)?;
         let caps = handle.get_concat_caps();
         Ok(Box::new(GenCamAsi { handle, caps }))
@@ -44,6 +65,22 @@ impl GenCamDriver for GenCamDriverAsi {
 }
 
 /// Generic camera control for ASI cameras.
+///
+/// Implements the [`GenCam`] trait for ASI cameras.
+///
+/// # Examples
+/// ```
+/// use generic_camera::{GenCam, GenCamDriver};
+/// use generic_camera_asi::{GenCamAsi, GenCamDriverAsi};
+///
+/// let mut drv = GenCamDriverAsi::default();
+/// if let Ok(mut cam) = drv.connect_first_device() {
+///     println!("Connected to camera: {}", cam.camera_name());
+/// } else {
+///     println!("No cameras available");
+/// }
+///
+
 #[derive(Debug)]
 pub struct GenCamAsi {
     handle: AsiImager,
@@ -64,7 +101,7 @@ impl GenCam for GenCamAsi {
     }
 
     fn info_handle(&self) -> Option<generic_camera::AnyGenCamInfo> {
-        todo!()
+        Some(Arc::new(Box::new(self.handle.get_info_handle())))
     }
 
     fn vendor(&self) -> &str {
@@ -104,7 +141,7 @@ impl GenCam for GenCamAsi {
         let (exp, _) = self.handle.get_exposure()?;
         self.handle.start_exposure()?;
         std::thread::sleep(exp);
-        while self.handle.image_ready()? == false {
+        while !(self.handle.image_ready()?) {
             std::thread::sleep(Duration::from_millis(10));
         }
         self.handle.download_image()

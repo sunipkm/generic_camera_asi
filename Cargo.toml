@@ -15,9 +15,9 @@ An efficient and ergonomic interface to capture images using cameras.
 """
 exclude = [".github"]
 
-[[bin]]
+[[example]]
 name = "asigeneric_capture"
-path = "src/main.rs"
+path = "examples/main.rs"
 test = true
 bench = false
 
@@ -25,17 +25,14 @@ bench = false
 
 [dependencies]
 generic-camera = { path = "../generic_camera" }
-refimage = { version = "<1.0", features = ["rayon", "fitsio", "serde_flate"]}
-cameraunit = "5.1"
-chrono = "0.4"
-configparser = "3.0"
-ctrlc = "3.4"
-fitsio = "0.21"
-image = "0.25"
+refimage = { version = "<1.0", default-features = false}
 log = "0.4"
-bytemuck = "1.18.0"
-lazy_static = "1.5.0"
+lazy_static = "1.5"
+bytemuck = "1.18"
 
 [build-dependencies]
-bindgen = "0.68.1"
+bindgen = "0.68"
 cc = "1.0.83"
+
+[dev-dependencies]
+fitsio = { version = "0.21" }

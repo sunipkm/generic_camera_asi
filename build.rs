@@ -27,7 +27,7 @@ fn main() {
         if let Ok(libdir) = std::env::var("LD_LIBRARY_PATH") {
             let paths = libdir
                 .split(":")
-                .filter_map(|x| if x.is_empty() { None } else { Some(x) })
+                .filter(|x| !x.is_empty())
                 .collect::<Vec<&str>>();
             for path in paths {
                 println!("cargo:rustc-link-search={}", path);

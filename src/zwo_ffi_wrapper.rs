@@ -1,7 +1,8 @@
 use std::{collections::HashMap, fmt::Display, os::raw, time::Duration};
 
 use generic_camera::{
-    AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError, GenCamPixelBpp, GenCamRoi, Property, PropertyError, PropertyLims, PropertyValue, SensorCtrl
+    AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError,
+    GenCamPixelBpp, GenCamRoi, Property, PropertyError, PropertyLims, PropertyValue, SensorCtrl,
 };
 use log::warn;
 
@@ -446,29 +447,6 @@ pub(crate) fn get_caps(
     caps
 }
 
-pub(crate) fn get_sensor_ctrl(
-    mut mcaps: HashMap<GenCamCtrl, AsiControlType>,
-    mut dcaps: HashMap<GenCamCtrl, Property>,
-) -> (
-    HashMap<GenCamCtrl, AsiControlType>,
-    HashMap<GenCamCtrl, Property>,
-) {
-    let keys = mcaps
-        .keys()
-        .filter_map(|k| {
-            if let GenCamCtrl::Device(_) = k {
-                None
-            } else {
-                // All keys that are not DeviceCtrl
-                Some(k.clone())
-            }
-        })
-        .collect::<Vec<_>>();
-    mcaps.retain(|k, _| keys.contains(k));
-    dcaps.retain(|k, _| keys.contains(k));
-    (mcaps, dcaps)
-}
-
 pub(crate) fn get_split_ctrl(
     info: &ASI_CAMERA_INFO,
     caps: &[ASI_CONTROL_CAPS],
@@ -490,8 +468,8 @@ pub(crate) fn get_split_ctrl(
 
 #[derive(Debug, Default)]
 pub(crate) struct AsiSensorCtrl {
-    pub mcaps: HashMap<GenCamCtrl, AsiControlType>,
-    pub dcaps: HashMap<GenCamCtrl, Property>,
+    pub(crate) mcaps: HashMap<GenCamCtrl, AsiControlType>,
+    pub(crate) dcaps: HashMap<GenCamCtrl, Property>,
 }
 
 impl AsiCtrl for AsiSensorCtrl {
@@ -515,8 +493,8 @@ impl AsiCtrl for AsiSensorCtrl {
 
 #[derive(Debug, Default)]
 pub(crate) struct AsiDeviceCtrl {
-    pub mcaps: HashMap<GenCamCtrl, AsiControlType>,
-    pub dcaps: HashMap<GenCamCtrl, Property>,
+    pub(crate) mcaps: HashMap<GenCamCtrl, AsiControlType>,
+    pub(crate) dcaps: HashMap<GenCamCtrl, Property>,
 }
 
 impl AsiDeviceCtrl {
@@ -527,7 +505,7 @@ impl AsiDeviceCtrl {
     ) -> Result<(PropertyValue, bool), GenCamError> {
         let (ctrl, _) = self
             .get_controller(name)
-            .ok_or_else(|| GenCamError::PropertyError {
+            .ok_or(GenCamError::PropertyError {
                 control: *name,
                 error: PropertyError::NotFound,
             })?;
@@ -548,18 +526,18 @@ impl AsiDeviceCtrl {
     ) -> Result<(), GenCamError> {
         let (ctrl, prop) = self
             .get_controller(name)
-            .ok_or_else(|| GenCamError::PropertyError {
+            .ok_or(GenCamError::PropertyError {
                 control: *name,
                 error: PropertyError::NotFound,
             })?;
-        prop.validate(&value)
+        prop.validate(value)
             .map_err(|e| GenCamError::PropertyError {
                 control: *name,
                 error: e,
             })?;
         let value = match value {
-            PropertyValue::Int(v) => v.clone(),
-            PropertyValue::Float(v) => (v.clone() * 10.0) as i64,
+            PropertyValue::Int(v) => *v,
+            PropertyValue::Float(v) => (*v * 10.0) as i64,
             _ => {
                 return Err(GenCamError::PropertyError {
                     control: *name,

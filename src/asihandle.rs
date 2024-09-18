@@ -1,10 +1,18 @@
 #![allow(unused)]
 use core::{panic, str};
 use std::{
-    cell::{Ref, RefCell}, collections::HashMap, ffi::{c_long, CStr}, fmt::{self, Display, Formatter}, hash::Hash, mem::MaybeUninit, sync::{
+    cell::{Ref, RefCell},
+    collections::HashMap,
+    ffi::{c_long, CStr},
+    fmt::{self, Display, Formatter},
+    hash::Hash,
+    mem::MaybeUninit,
+    sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         Arc, Mutex, RwLock,
-    }, thread::sleep, time::{Duration, Instant, SystemTime}
+    },
+    thread::sleep,
+    time::{Duration, Instant, SystemTime},
 };
 
 use crate::{
@@ -21,10 +29,10 @@ use crate::{
         ASI_IMG_TYPE_ASI_IMG_END, ASI_IMG_TYPE_ASI_IMG_RAW16, ASI_IMG_TYPE_ASI_IMG_RAW8,
     },
     zwo_ffi_wrapper::{
-        get_bins, get_caps, get_control_caps, get_control_value, get_info,
-        get_pixfmt, get_split_ctrl, map_control_cap, set_control_value, string_from_char,
-        to_asibool, AsiControlType, AsiCtrl, AsiDeviceCtrl, AsiError, AsiExposureStatus, AsiHandle,
-        AsiRoi, AsiSensorCtrl,
+        get_bins, get_caps, get_control_caps, get_control_value, get_info, get_pixfmt,
+        get_split_ctrl, map_control_cap, set_control_value, string_from_char, to_asibool,
+        AsiControlType, AsiCtrl, AsiDeviceCtrl, AsiError, AsiExposureStatus, AsiHandle, AsiRoi,
+        AsiSensorCtrl,
     },
     ASICALL,
 };
@@ -37,8 +45,8 @@ use generic_camera::{
     GenCamDescriptor, GenCamError, GenCamPixelBpp, GenCamRoi, GenCamState, Property, PropertyLims,
 };
 
-use refimage::ColorSpace;
 use log::warn;
+use refimage::ColorSpace;
 use refimage::{DynamicImageData, GenericImage, ImageData};
 
 pub(crate) fn get_asi_devs() -> Result<Vec<GenCamDescriptor>, AsiError> {
@@ -98,7 +106,7 @@ pub(crate) struct AsiImager {
     // Core parts for GenCam
     serial: [u8; 16],
     name: [u8; 20],
-    cspace: ColorSpace,           // Bayer pattern
+    cspace: ColorSpace,               // Bayer pattern
     shutter_open: Option<AtomicBool>, // Shutter open/closed not available on GenCamInfo
     exposure: AtomicU64,
     exposure_auto: AtomicBool,
@@ -114,16 +122,36 @@ pub(crate) struct AsiImager {
     device_ctrl: Arc<AsiDeviceCtrl>,
     start: Arc<RwLock<Option<Instant>>>,
 }
+
+/// [`GenCamInfoAsi`] implements the [`GenCamInfo`] trait for ASI cameras.
+///
+/// # Examples
+/// ```
+///
+/// use generic_camera::{GenCam, GenCamDriver};
+/// use generic_camera_asi::{GenCamAsi, GenCamDriverAsi};
+///
+/// let mut drv = GenCamDriverAsi::default();
+/// if let Ok(mut cam) = drv.connect_first_device() {
+///    println!("Connected to camera: {}", cam.camera_name());
+///    if let Some(info) = cam.info_handle() {
+///         println!("Capturing: {}", info.is_capturing());
+/// } else {
+///     println!("No camera info available");
+///   }
+/// } else {
+///   println!("No cameras available");
+/// }
 #[derive(Debug, Clone)]
-pub struct GenAsiInfo {
-    pub handle: Arc<AsiHandle>,
-    pub serial: [u8; 16],
-    pub name: [u8; 20],
-    pub has_cooler: bool,
-    pub capturing: Arc<AtomicBool>,
-    pub info: Arc<GenCamDescriptor>,
-    pub ctrl: Arc<AsiDeviceCtrl>,
-    pub start: Arc<RwLock<Option<Instant>>>,
+pub struct GenCamInfoAsi {
+    pub(crate) handle: Arc<AsiHandle>,
+    pub(crate) serial: [u8; 16],
+    pub(crate) name: [u8; 20],
+    pub(crate) has_cooler: bool,
+    pub(crate) capturing: Arc<AtomicBool>,
+    pub(crate) info: Arc<GenCamDescriptor>,
+    pub(crate) ctrl: Arc<AsiDeviceCtrl>,
+    pub(crate) start: Arc<RwLock<Option<Instant>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +173,12 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
     let bpp = match roi.fmt {
         ASI_IMG_TYPE_ASI_IMG_RAW8 => GenCamPixelBpp::Bpp8,
         ASI_IMG_TYPE_ASI_IMG_RAW16 => GenCamPixelBpp::Bpp16,
-        _ => return Err(GenCamError::GeneralError(format!("ASI: Invalid pixel format: {}", roi.fmt))),
+        _ => {
+            return Err(GenCamError::GeneralError(format!(
+                "ASI: Invalid pixel format: {}",
+                roi.fmt
+            )))
+        }
     };
     let roi = GenCamRoi {
         x_min: roi.x as _,
@@ -194,7 +227,7 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
         roi: (roi, bpp),
         last_exposure: RefCell::new(None),
         imgstor: vec![0u16; (info.MaxHeight * info.MaxWidth) as _],
-        sensor_ctrl: sensor_ctrl,
+        sensor_ctrl,
         info: Arc::new(ginfo.clone()),
         device_ctrl: Arc::new(device_ctrl),
         start: Arc::new(RwLock::new(None)),
@@ -505,7 +538,7 @@ impl AsiImager {
             img.insert_key(
                 "BAYERPAT",
                 (
-                        match self.cspace {
+                    match self.cspace {
                         ColorSpace::Bggr => "BGGR",
                         ColorSpace::Gbrg => "GBRG",
                         ColorSpace::Grbg => "GRBG",
@@ -763,13 +796,13 @@ impl AsiImager {
     }
 
     pub fn get_concat_caps(&self) -> HashMap<GenCamCtrl, Property> {
-        let mut out = self.sensor_ctrl.dcaps.clone();
-        out.extend(self.device_ctrl.dcaps.clone());
+        let mut out = self.sensor_ctrl.list_properties().clone();
+        out.extend(self.device_ctrl.list_properties().clone());
         out
     }
 
-    pub fn get_info_handle(&self) -> GenAsiInfo {
-        GenAsiInfo {
+    pub fn get_info_handle(&self) -> GenCamInfoAsi {
+        GenCamInfoAsi {
             handle: self.handle.clone(),
             serial: self.serial,
             name: self.name,
@@ -782,7 +815,7 @@ impl AsiImager {
     }
 }
 
-impl GenCamInfo for GenAsiInfo {
+impl GenCamInfo for GenCamInfoAsi {
     fn camera_ready(&self) -> bool {
         true
     }
@@ -848,7 +881,7 @@ impl GenCamInfo for GenAsiInfo {
     }
 
     fn list_properties(&self) -> &HashMap<GenCamCtrl, Property> {
-        &self.ctrl.dcaps
+        self.ctrl.list_properties()
     }
 
     fn get_property(&self, name: GenCamCtrl) -> GenCamResult<(PropertyValue, bool)> {
