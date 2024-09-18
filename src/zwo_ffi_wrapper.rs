@@ -1,9 +1,9 @@
 use std::{collections::HashMap, fmt::Display, os::raw, time::Duration};
 
 use generic_camera::{
-    AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError,
-    GenCamPixelBpp, Property, PropertyLims,
+    AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError, GenCamPixelBpp, GenCamRoi, Property, PropertyError, PropertyLims, PropertyValue, SensorCtrl
 };
+use log::warn;
 
 use crate::zwo_ffi::*;
 
@@ -253,22 +253,6 @@ pub(crate) fn map_control_cap(
                 ),
             ),
         )),
-        Temperature => Some((
-            DeviceCtrl::Temperature.into(),
-            (
-                Temperature,
-                Property::new(
-                    PropertyLims::Float {
-                        min: obj.MinValue as f64 / 10.0,
-                        max: obj.MaxValue as f64 / 10.0,
-                        step: 0.1,
-                        default: obj.DefaultValue as f64 / 10.0,
-                    },
-                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
-                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
-                ),
-            ),
-        )),
         AutoExpMax => Some((
             ExposureCtrl::ExposureTime.into(),
             (
@@ -333,6 +317,22 @@ pub(crate) fn map_control_cap(
                 ),
             ),
         )),
+        Temperature => Some((
+            DeviceCtrl::Temperature.into(),
+            (
+                Temperature,
+                Property::new(
+                    PropertyLims::Float {
+                        min: obj.MinValue as f64 / 10.0,
+                        max: obj.MaxValue as f64 / 10.0,
+                        step: 0.1,
+                        default: obj.DefaultValue as f64 / 10.0,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
+        )),
         CoolerPowerPercent => Some((
             DeviceCtrl::CoolerPower.into(),
             (
@@ -365,8 +365,238 @@ pub(crate) fn map_control_cap(
                 ),
             ),
         )),
+        CoolerOn => Some((
+            DeviceCtrl::CoolerEnable.into(),
+            (
+                CoolerOn,
+                Property::new(
+                    PropertyLims::Bool {
+                        default: obj.DefaultValue != 0,
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
+        )),
         _ => None,
     }
+}
+
+pub(crate) fn get_caps(
+    info: &ASI_CAMERA_INFO,
+    caps: &[ASI_CONTROL_CAPS],
+) -> HashMap<GenCamCtrl, (AsiControlType, Property)> {
+    let mut caps: HashMap<GenCamCtrl, (AsiControlType, Property)> =
+        caps.iter().filter_map(map_control_cap).collect();
+    caps.insert(
+        SensorCtrl::PixelFormat.into(),
+        (
+            AsiControlType::Invalid,
+            Property::new(
+                PropertyLims::PixelFmt {
+                    variants: get_pixfmt(&info.SupportedVideoFormat, ASI_IMG_TYPE_ASI_IMG_END as _),
+                    default: get_pixfmt(&info.SupportedVideoFormat, ASI_IMG_TYPE_ASI_IMG_END as _)
+                        [0], // Safety: get_pixfmt() returns at least one element
+                },
+                false,
+                false,
+            ),
+        ),
+    );
+    if info.IsUSB3Camera == ASI_BOOL_ASI_TRUE as _ {
+        caps.insert(
+            DeviceCtrl::Custom("UUID".into()).into(),
+            (
+                AsiControlType::Invalid,
+                Property::new(
+                    PropertyLims::EnumStr {
+                        variants: Vec::new(),
+                        default: "".into(),
+                    },
+                    false,
+                    false,
+                ),
+            ),
+        );
+    }
+    caps.insert(
+        SensorCtrl::ReverseX.into(),
+        (
+            AsiControlType::Flip,
+            Property::new(PropertyLims::Bool { default: false }, false, false),
+        ),
+    );
+    caps.insert(
+        SensorCtrl::ReverseY.into(),
+        (
+            AsiControlType::Flip,
+            Property::new(PropertyLims::Bool { default: false }, false, false),
+        ),
+    );
+    if info.MechanicalShutter == ASI_BOOL_ASI_TRUE as _ {
+        let mut prop = Property::new(PropertyLims::Bool { default: true }, false, false);
+        prop.set_doc(
+                "True if the shutter is open, false if the shutter is closed. Setting this property will open or close the shutter."
+            );
+        caps.insert(
+            SensorCtrl::ShutterMode.into(),
+            (AsiControlType::Invalid, prop),
+        );
+    }
+    caps
+}
+
+pub(crate) fn get_sensor_ctrl(
+    mut mcaps: HashMap<GenCamCtrl, AsiControlType>,
+    mut dcaps: HashMap<GenCamCtrl, Property>,
+) -> (
+    HashMap<GenCamCtrl, AsiControlType>,
+    HashMap<GenCamCtrl, Property>,
+) {
+    let keys = mcaps
+        .keys()
+        .filter_map(|k| {
+            if let GenCamCtrl::Device(_) = k {
+                None
+            } else {
+                // All keys that are not DeviceCtrl
+                Some(k.clone())
+            }
+        })
+        .collect::<Vec<_>>();
+    mcaps.retain(|k, _| keys.contains(k));
+    dcaps.retain(|k, _| keys.contains(k));
+    (mcaps, dcaps)
+}
+
+pub(crate) fn get_split_ctrl(
+    info: &ASI_CAMERA_INFO,
+    caps: &[ASI_CONTROL_CAPS],
+) -> (AsiSensorCtrl, AsiDeviceCtrl) {
+    let caps = get_caps(info, caps);
+    let mut sctrl = AsiSensorCtrl::default();
+    let mut dctrl = AsiDeviceCtrl::default();
+    for (k, (ctrl, prop)) in caps {
+        if let GenCamCtrl::Device(_) = k {
+            dctrl.mcaps.insert(k, ctrl);
+            dctrl.dcaps.insert(k, prop);
+        } else {
+            sctrl.mcaps.insert(k, ctrl);
+            sctrl.dcaps.insert(k, prop);
+        }
+    }
+    (sctrl, dctrl)
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AsiSensorCtrl {
+    pub mcaps: HashMap<GenCamCtrl, AsiControlType>,
+    pub dcaps: HashMap<GenCamCtrl, Property>,
+}
+
+impl AsiCtrl for AsiSensorCtrl {
+    fn list_properties(&self) -> &HashMap<GenCamCtrl, Property> {
+        &self.dcaps
+    }
+
+    fn get_controller(&self, name: &GenCamCtrl) -> Option<(&AsiControlType, &Property)> {
+        if let Some(ctrl) = self.mcaps.get(name) {
+            if let Some(prop) = self.dcaps.get(name) {
+                return Some((ctrl, prop));
+            }
+        }
+        None
+    }
+
+    fn contains(&self, name: &GenCamCtrl) -> bool {
+        self.mcaps.contains_key(name) && self.dcaps.contains_key(name)
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AsiDeviceCtrl {
+    pub mcaps: HashMap<GenCamCtrl, AsiControlType>,
+    pub dcaps: HashMap<GenCamCtrl, Property>,
+}
+
+impl AsiDeviceCtrl {
+    pub(crate) fn get_value(
+        &self,
+        handle: &AsiHandle,
+        name: &GenCamCtrl,
+    ) -> Result<(PropertyValue, bool), GenCamError> {
+        let (ctrl, _) = self
+            .get_controller(name)
+            .ok_or_else(|| GenCamError::PropertyError {
+                control: *name,
+                error: PropertyError::NotFound,
+            })?;
+        let (value, auto) = get_control_value(handle.handle(), *ctrl)?;
+        if name == &GenCamCtrl::Device(DeviceCtrl::Temperature) {
+            Ok((PropertyValue::Float(value as f64 / 10.0), auto != 0))
+        } else {
+            Ok((value.into(), auto != 0))
+        }
+    }
+
+    pub(crate) fn set_value(
+        &self,
+        handle: &AsiHandle,
+        name: &GenCamCtrl,
+        value: &PropertyValue,
+        auto: bool,
+    ) -> Result<(), GenCamError> {
+        let (ctrl, prop) = self
+            .get_controller(name)
+            .ok_or_else(|| GenCamError::PropertyError {
+                control: *name,
+                error: PropertyError::NotFound,
+            })?;
+        prop.validate(&value)
+            .map_err(|e| GenCamError::PropertyError {
+                control: *name,
+                error: e,
+            })?;
+        let value = match value {
+            PropertyValue::Int(v) => v.clone(),
+            PropertyValue::Float(v) => (v.clone() * 10.0) as i64,
+            _ => {
+                return Err(GenCamError::PropertyError {
+                    control: *name,
+                    error: PropertyError::InvalidControlType {
+                        expected: generic_camera::PropertyType::Int,
+                        received: value.get_type(),
+                    },
+                })
+            }
+        };
+        set_control_value(handle.handle(), *ctrl, value, to_asibool(auto))
+    }
+}
+
+impl AsiCtrl for AsiDeviceCtrl {
+    fn list_properties(&self) -> &HashMap<GenCamCtrl, Property> {
+        &self.dcaps
+    }
+
+    fn get_controller(&self, name: &GenCamCtrl) -> Option<(&AsiControlType, &Property)> {
+        if let Some(ctrl) = self.mcaps.get(name) {
+            if let Some(prop) = self.dcaps.get(name) {
+                return Some((ctrl, prop));
+            }
+        }
+        None
+    }
+
+    fn contains(&self, name: &GenCamCtrl) -> bool {
+        self.mcaps.contains_key(name) && self.dcaps.contains_key(name)
+    }
+}
+
+pub(crate) trait AsiCtrl {
+    fn list_properties(&self) -> &HashMap<GenCamCtrl, Property>;
+    fn get_controller(&self, name: &GenCamCtrl) -> Option<(&AsiControlType, &Property)>;
+    fn contains(&self, name: &GenCamCtrl) -> bool;
 }
 
 /// ASI Camera ROI
@@ -407,7 +637,7 @@ impl AsiRoi {
             fmt: fmt.into(),
         })
     }
-    
+
     /// Set the ROI
     pub(crate) fn set(&self, handle: i32) -> Result<(), AsiError> {
         ASICALL!(ASISetStartPos(handle, self.x, self.y))?;
@@ -419,6 +649,39 @@ impl AsiRoi {
             self.fmt as _
         ))?;
         Ok(())
+    }
+
+    pub(crate) fn convert(&self) -> (GenCamRoi, GenCamPixelBpp) {
+        (
+            GenCamRoi {
+                x_min: self.x as _,
+                y_min: self.y as _,
+                width: self.width as _,
+                height: self.height as _,
+                bin_x: self.bin as _,
+                bin_y: self.bin as _,
+            },
+            match self.fmt {
+                ASI_IMG_TYPE_ASI_IMG_RAW8 => GenCamPixelBpp::Bpp8,
+                ASI_IMG_TYPE_ASI_IMG_RAW16 => GenCamPixelBpp::Bpp16,
+                _ => GenCamPixelBpp::Bpp8,
+            },
+        )
+    }
+
+    pub(crate) fn concat(roi: &GenCamRoi, bpp: GenCamPixelBpp) -> Self {
+        Self {
+            x: roi.x_min as _,
+            y: roi.y_min as _,
+            width: roi.width as _,
+            height: roi.height as _,
+            bin: roi.bin_x as _,
+            fmt: match bpp {
+                GenCamPixelBpp::Bpp8 => ASI_IMG_TYPE_ASI_IMG_RAW8,
+                GenCamPixelBpp::Bpp16 => ASI_IMG_TYPE_ASI_IMG_RAW16,
+                _ => ASI_IMG_TYPE_ASI_IMG_RAW8,
+            },
+        }
     }
 }
 
@@ -599,4 +862,90 @@ pub(crate) fn to_asibool(v: bool) -> ASI_BOOL {
     } else {
         ASI_BOOL_ASI_FALSE
     }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct AsiHandle(i32);
+
+impl AsiHandle {
+    pub(crate) fn handle(&self) -> i32 {
+        self.0
+    }
+
+    pub(crate) fn state_raw(&self) -> Result<AsiExposureStatus, GenCamError> {
+        let handle = self.handle();
+        let mut stat = Default::default();
+        ASICALL!(ASIGetExpStatus(handle, &mut stat)).map_err(|e| match e {
+            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+            AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+            _ => GenCamError::GeneralError(format!("{:?}", e)),
+        })?;
+        Ok(stat.into())
+    }
+}
+
+impl From<i32> for AsiHandle {
+    fn from(val: i32) -> Self {
+        Self(val)
+    }
+}
+
+impl From<AsiHandle> for i32 {
+    fn from(val: AsiHandle) -> Self {
+        val.0
+    }
+}
+
+impl Drop for AsiHandle {
+    fn drop(&mut self) {
+        let handle = self.clone().into();
+        if let Err(e) = ASICALL!(ASIStopExposure(handle)) {
+            warn!("Failed to stop exposure: {:?}", e);
+        }
+
+        if let Err(e) = ASICALL!(ASISetControlValue(
+            handle,
+            ASI_CONTROL_TYPE_ASI_COOLER_ON as i32,
+            0,
+            ASI_BOOL_ASI_FALSE as i32
+        )) {
+            warn!("Failed to turn off cooler: {:?}", e);
+        }
+
+        if let Err(e) = ASICALL!(ASICloseCamera(handle)) {
+            warn!("Failed to close camera: {:?}", e);
+        }
+    }
+}
+
+pub(crate) fn get_info(handle: i32) -> Result<ASI_CAMERA_INFO, GenCamError> {
+    let mut info = ASI_CAMERA_INFO::default();
+    ASICALL!(ASIGetCameraPropertyByID(handle, &mut info)).map_err(|e| match e {
+        AsiError::CameraRemoved(_, _) => GenCamError::CameraRemoved,
+        AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+        _ => GenCamError::GeneralError(format!("{:?}", e)),
+    })?;
+    Ok(info)
+}
+
+pub(crate) fn get_control_caps(handle: i32) -> Result<Vec<ASI_CONTROL_CAPS>, GenCamError> {
+    let mut num_ctrl = 0;
+    ASICALL!(ASIGetNumOfControls(handle, &mut num_ctrl)).map_err(|e| match e {
+        AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+        AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+        _ => GenCamError::GeneralError(format!("{:?}", e)),
+    })?;
+    let mut caps = Vec::with_capacity(num_ctrl as _);
+    for i in 0..num_ctrl {
+        let mut cap = ASI_CONTROL_CAPS::default();
+        if let Some(e) = ASICALL!(ASIGetControlCaps(handle, i, &mut cap)).err() {
+            match e {
+                AsiError::CameraClosed(_, _) => return Err(GenCamError::CameraClosed),
+                AsiError::InvalidId(_, _) => return Err(GenCamError::InvalidId(handle)),
+                _ => continue,
+            }
+        };
+        caps.push(cap);
+    }
+    Ok(caps)
 }

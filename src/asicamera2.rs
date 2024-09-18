@@ -1,24 +1,56 @@
 #![warn(missing_docs)]
 use std::{collections::HashMap, time::Duration};
 
-use generic_camera::{GenCam, GenCamCtrl, GenCamError, GenCamResult, Property};
+use generic_camera::{
+    GenCam, GenCamCtrl, GenCamDriver, GenCamError, GenCamResult, Property, PropertyValue
+};
 use refimage::GenericImage;
 
-use crate::asihandle::AsiHandle;
+use crate::{asihandle::{get_asi_devs, open_device, AsiImager}, open_camera, zwo_ffi::ASIGetNumOfConnectedCameras, zwo_ffi_wrapper::AsiError, ASICALL};
+
+#[derive(Debug, Default)]
+pub struct GenCamDriverAsi {}
+
+impl GenCamDriver for GenCamDriverAsi {
+    fn available_devices(&self) -> usize {
+        let res = unsafe { ASIGetNumOfConnectedCameras() };
+        res as usize
+    }
+
+    fn list_devices(&mut self) -> GenCamResult<Vec<generic_camera::GenCamDescriptor>> {
+        get_asi_devs().map_err(|e| {
+            match e {
+                AsiError::InvalidId(_,_) => GenCamError::InvalidIndex(0),
+                AsiError::CameraRemoved(_,_) => GenCamError::CameraRemoved,
+                AsiError::CameraClosed(_,_) => GenCamError::CameraClosed,
+                _ => GenCamError::GeneralError(format!("{:?}", e))
+            }
+        })
+    }
+
+    fn connect_device(&mut self, descriptor: &generic_camera::GenCamDescriptor) -> GenCamResult<generic_camera::AnyGenCam> {
+        let handle = open_device(descriptor)?;
+        let caps = handle.get_concat_caps();
+        Ok(Box::new(GenCamAsi { handle, caps }))
+    }
+
+    fn connect_first_device(&mut self) -> GenCamResult<generic_camera::AnyGenCam> {
+        let devs = self.list_devices()?;
+        if devs.is_empty() {
+            return Err(GenCamError::NoCamerasAvailable);
+        }
+        self.connect_device(&devs[0])
+    }
+}
 
 /// Generic camera control for ASI cameras.
 #[derive(Debug)]
 pub struct GenCamAsi {
-    handle: AsiHandle,
+    handle: AsiImager,
     caps: HashMap<GenCamCtrl, Property>,
 }
 
 impl GenCam for GenCamAsi {
-    fn set_exposure(&mut self, exposure: std::time::Duration) -> GenCamResult<Duration> {
-        self.handle.set_exposure(exposure)?;
-        self.handle.get_exposure()
-    }
-
     fn start_exposure(&mut self) -> GenCamResult<()> {
         self.handle.start_exposure()
     }
@@ -30,65 +62,70 @@ impl GenCam for GenCamAsi {
     fn download_image(&mut self) -> GenCamResult<GenericImage> {
         self.handle.download_image()
     }
-    
+
     fn info_handle(&self) -> Option<generic_camera::AnyGenCamInfo> {
         todo!()
     }
-    
+
     fn vendor(&self) -> &str {
-        todo!()
+        "ZWO"
     }
-    
+
     fn camera_ready(&self) -> bool {
-        todo!()
+        true
     }
-    
+
     fn camera_name(&self) -> &str {
         self.handle.camera_name()
     }
-    
+
     fn list_properties(&self) -> &std::collections::HashMap<GenCamCtrl, generic_camera::Property> {
-        todo!()
+        &self.caps
     }
-    
-    fn get_property(&self, name: GenCamCtrl) -> GenCamResult<(&generic_camera::PropertyValue, bool)> {
-        todo!()
-    }
-    
+
     fn set_property(
         &mut self,
         name: GenCamCtrl,
         value: &generic_camera::PropertyValue,
         auto: bool,
     ) -> GenCamResult<()> {
-        todo!()
+        self.handle.set_property(&name, value, auto)
     }
-    
+
     fn cancel_capture(&self) -> GenCamResult<()> {
-        todo!()
+        self.handle.stop_exposure()
     }
-    
+
     fn is_capturing(&self) -> bool {
-        todo!()
+        self.handle.is_capturing()
     }
-    
-    fn capture(&self) -> GenCamResult<GenericImage> {
-        todo!()
+
+    fn capture(&mut self) -> GenCamResult<GenericImage> {
+        let (exp, _) = self.handle.get_exposure()?;
+        self.handle.start_exposure()?;
+        std::thread::sleep(exp);
+        while self.handle.image_ready()? == false {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        self.handle.download_image()
     }
-    
+
     fn camera_state(&self) -> GenCamResult<generic_camera::GenCamState> {
-        todo!()
+        self.handle.get_state()
     }
-    
-    fn get_exposure(&self) -> GenCamResult<std::time::Duration> {
-        todo!()
+
+    fn set_roi(
+        &mut self,
+        roi: &generic_camera::GenCamRoi,
+    ) -> GenCamResult<&generic_camera::GenCamRoi> {
+        self.handle.set_roi(roi)
     }
-    
-    fn set_roi(&mut self, roi: &generic_camera::GenCamRoi) -> GenCamResult<&generic_camera::GenCamRoi> {
-        todo!()
-    }
-    
+
     fn get_roi(&self) -> &generic_camera::GenCamRoi {
-        todo!()
+        self.handle.get_roi()
+    }
+
+    fn get_property(&self, name: GenCamCtrl) -> GenCamResult<(PropertyValue, bool)> {
+        self.handle.get_property(&name)
     }
 }
