@@ -197,9 +197,12 @@ fn main() {
         //     );
         //     cam.set_exposure(exposure).unwrap();
         // }
-        if !done.load(Ordering::SeqCst) {
-            let stime = (cfg.cadence - estart.elapsed()).min(Duration::from_secs(0));
-            sleep(stime);
+        while !done.load(Ordering::SeqCst) {
+            let elapsed = estart.elapsed();
+            if elapsed > cfg.cadence {
+                break;
+            }
+            sleep(Duration::from_secs(1).min(cfg.cadence - elapsed));
         }
     }
     camthread.join().unwrap();
@@ -211,7 +214,7 @@ impl Default for ASICamconfig {
         Self {
             progname: "ASICam".to_string(),
             savedir: "./data".to_string(),
-            cadence: Duration::from_secs(20),
+            cadence: Duration::from_secs(1),
             max_exposure: Duration::from_secs(120),
             percentile: 95.0,
             max_bin: 4,
