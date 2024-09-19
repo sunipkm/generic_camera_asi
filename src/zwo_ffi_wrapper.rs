@@ -254,6 +254,22 @@ pub(crate) fn map_control_cap(
                 ),
             ),
         )),
+        Exposure => Some((
+            ExposureCtrl::ExposureTime.into(),
+            (
+                Exposure,
+                Property::new(
+                    PropertyLims::Duration {
+                        min: Duration::from_micros(obj.MinValue as _),
+                        max: Duration::from_micros(obj.MaxValue as _),
+                        step: Duration::from_micros(1),
+                        default: Duration::from_micros(obj.DefaultValue as _),
+                    },
+                    obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
+                    obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
+                ),
+            ),
+        )),
         AutoExpMax => Some((
             ExposureCtrl::ExposureTime.into(),
             (
@@ -636,8 +652,6 @@ impl AsiRoi {
                 y_min: self.y as _,
                 width: self.width as _,
                 height: self.height as _,
-                bin_x: self.bin as _,
-                bin_y: self.bin as _,
             },
             match self.fmt {
                 ASI_IMG_TYPE_ASI_IMG_RAW8 => GenCamPixelBpp::Bpp8,
@@ -653,7 +667,7 @@ impl AsiRoi {
             y: roi.y_min as _,
             width: roi.width as _,
             height: roi.height as _,
-            bin: roi.bin_x as _,
+            bin: 1,
             fmt: match bpp {
                 GenCamPixelBpp::Bpp8 => ASI_IMG_TYPE_ASI_IMG_RAW8,
                 GenCamPixelBpp::Bpp16 => ASI_IMG_TYPE_ASI_IMG_RAW16,

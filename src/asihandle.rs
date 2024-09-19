@@ -185,8 +185,6 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
         y_min: roi.y as _,
         width: roi.width as _,
         height: roi.height as _,
-        bin_x: roi.bin as _,
-        bin_y: roi.bin as _,
     };
     let sn = get_sn(handle).map_err(|e| match e {
         AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
@@ -698,6 +696,13 @@ impl AsiImager {
                     }
                 }
                 self.set_flip(flipx, flipy)
+            }
+            GenCamCtrl::Exposure(ExposureCtrl::ExposureTime) => {
+                let val = value.try_into().map_err(|e| GenCamError::PropertyError {
+                    control: *prop,
+                    error: e,
+                })?;
+                self.set_exposure(val, auto)
             }
             _ => Err(GenCamError::PropertyError {
                 control: *prop,

@@ -6,3 +6,5 @@ mod zwo_ffi_wrapper;
 
 pub use asicamera2::{GenCamAsi, GenCamDriverAsi};
 pub use asihandle::GenCamInfoAsi;
+
+pub use generic_camera::*;
