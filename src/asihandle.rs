@@ -71,9 +71,6 @@ pub(crate) fn get_asi_devs() -> Result<Vec<GenCamDescriptor>, AsiError> {
             continue;
         }
         let sn = get_sn(dev.CameraID).unwrap_or("Unknown".into());
-        if ASICALL!(ASICloseCamera(dev.CameraID)).is_err() {
-            warn!("Failed to close camera: {}", dev.CameraID);
-        }
         let mut dev: GenCamDescriptor = dev.into();
         dev.info.insert("Serial Number".to_string(), sn.into());
         devs.push(dev);
@@ -164,25 +161,14 @@ pub(crate) struct CaptureInfo {
 
 pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
     let handle = ginfo.id as _;
-    println!("Initializing camera: {}", handle);
-    ASICALL!(ASIOpenCamera(handle)).map_err(|e| match e {
-        AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
-        AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
-        AsiError::CameraRemoved(_, _) => GenCamError::CameraRemoved,
-        _ => GenCamError::GeneralError(format!("{:?}", e)),
-    })?;
     ASICALL!(ASIInitCamera(handle)).map_err(|e| match e {
         AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
         AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
         AsiError::CameraRemoved(_, _) => GenCamError::CameraRemoved,
         _ => GenCamError::GeneralError(format!("{:?}", e)),
     })?;
-    println!("Camera initialized: {}", handle);
     let info = get_info(handle)?;
     let caps = get_control_caps(handle)?;
-    for cap in caps.iter() {
-        println!("{}", cap);
-    }
     let (sensor_ctrl, device_ctrl) = get_split_ctrl(&info, &caps);
     let mut roi = AsiRoi::get(handle).map_err(|e| match e {
         AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
@@ -237,8 +223,6 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
     } else {
         ColorSpace::Gray
     };
-    println!("Device Controls: {:?}", device_ctrl);
-    println!("Sensor Controls: {:?}", sensor_ctrl);
     let out = AsiImager {
         handle: Arc::new(handle.into()),
         serial: sn,
@@ -641,7 +625,6 @@ impl AsiImager {
         auto: bool,
     ) -> Result<(), GenCamError> {
         if !self.sensor_ctrl.contains(prop) & !self.device_ctrl.contains(prop) {
-            println!("{prop:?} not found at all.");
             return Err(GenCamError::PropertyError {
                 control: *prop,
                 error: PropertyError::NotFound,
@@ -815,7 +798,6 @@ impl AsiImager {
             Err(GenCamError::ExposureNotStarted)
         } else {
             let state = self.handle.state_raw()?;
-            println!("State: {:?}", state);
             Ok(state == AsiExposureStatus::Success)
         }
     }

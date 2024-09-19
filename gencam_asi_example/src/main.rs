@@ -50,7 +50,7 @@ fn main() {
     let mut drv = GenCamDriverAsi::default();
     let num_cameras = drv.available_devices();
     println!("Found {} cameras", num_cameras);
-    if num_cameras <= 0 {
+    if num_cameras == 0 {
         return;
     }
 
@@ -122,7 +122,7 @@ fn main() {
 
     cam.set_property(
         GenCamCtrl::Exposure(ExposureCtrl::ExposureTime),
-        &(Duration::from_secs(10).into()),
+        &(Duration::from_millis(100).into()),
         false,
     )
     .expect("Error setting exposure time");
@@ -144,7 +144,9 @@ fn main() {
         );
         let exp_start = Local::now();
         let estart = Instant::now();
-        let img = cam.capture().expect("Error capturing image");
+        let Ok(img) = cam.capture() else {
+            break;
+        };
         let dir_prefix = Path::new(&cfg.savedir).join(exp_start.format("%Y%m%d").to_string());
         if !dir_prefix.exists() {
             std::fs::create_dir_all(&dir_prefix).unwrap();

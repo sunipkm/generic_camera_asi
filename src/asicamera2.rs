@@ -143,18 +143,9 @@ impl GenCam for GenCamAsi {
 
     fn capture(&mut self) -> GenCamResult<GenericImage> {
         let (exp, _) = self.handle.get_exposure()?;
-        println!("Exposure: {:?}", exp);
         self.handle.start_exposure()?;
-        println!("Exposure started");
         std::thread::sleep(exp);
-        println!("Waiting for image");
-        loop {
-            let ready = self.handle.image_ready()?;
-            let state = self.handle.get_state()?;
-            println!("Image ready: {} [{:?}]", ready, state);
-            if ready {
-                break;
-            }
+        while !self.handle.image_ready()? {
             std::thread::sleep(Duration::from_millis(10));
         }
         self.handle.download_image()
