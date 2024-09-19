@@ -1,8 +1,8 @@
 #![warn(missing_docs)]
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use generic_camera::{
-    GenCam, GenCamCtrl, GenCamDriver, GenCamError, GenCamResult, Property, PropertyValue,
+    AnyGenCamInfo, GenCam, GenCamCtrl, GenCamDescriptor, GenCamDriver, GenCamError, GenCamResult, Property, PropertyValue
 };
 use refimage::GenericImage;
 
@@ -92,6 +92,10 @@ impl GenCam for GenCamAsi {
         self.handle.start_exposure()
     }
 
+    fn info(&self) -> GenCamResult<&GenCamDescriptor> {
+        Ok(self.handle.get_descriptor())
+    }
+
     fn image_ready(&self) -> GenCamResult<bool> {
         self.handle.image_ready()
     }
@@ -100,8 +104,8 @@ impl GenCam for GenCamAsi {
         self.handle.download_image()
     }
 
-    fn info_handle(&self) -> Option<generic_camera::AnyGenCamInfo> {
-        Some(Arc::new(Box::new(self.handle.get_info_handle())))
+    fn info_handle(&self) -> Option<AnyGenCamInfo> {
+        Some(Box::new(self.handle.get_info_handle()))
     }
 
     fn vendor(&self) -> &str {
@@ -139,9 +143,18 @@ impl GenCam for GenCamAsi {
 
     fn capture(&mut self) -> GenCamResult<GenericImage> {
         let (exp, _) = self.handle.get_exposure()?;
+        println!("Exposure: {:?}", exp);
         self.handle.start_exposure()?;
+        println!("Exposure started");
         std::thread::sleep(exp);
-        while !(self.handle.image_ready()?) {
+        println!("Waiting for image");
+        loop {
+            let ready = self.handle.image_ready()?;
+            let state = self.handle.get_state()?;
+            println!("Image ready: {} [{:?}]", ready, state);
+            if ready {
+                break;
+            }
             std::thread::sleep(Duration::from_millis(10));
         }
         self.handle.download_image()

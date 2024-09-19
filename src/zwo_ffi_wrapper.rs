@@ -1,4 +1,4 @@
-use std::{collections::HashMap, fmt::Display, os::raw, time::Duration};
+use std::{collections::HashMap, fmt::{Debug, Display}, os::raw, time::Duration};
 
 use generic_camera::{
     AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError,
@@ -271,7 +271,7 @@ pub(crate) fn map_control_cap(
             ),
         )),
         AutoExpMax => Some((
-            ExposureCtrl::ExposureTime.into(),
+            ExposureCtrl::AutoMaxExposure.into(),
             (
                 AutoExpMax,
                 Property::new(
@@ -940,4 +940,18 @@ pub(crate) fn get_control_caps(handle: i32) -> Result<Vec<ASI_CONTROL_CAPS>, Gen
         caps.push(cap);
     }
     Ok(caps)
+}
+
+impl Display for ASI_CONTROL_CAPS {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} - {} ({} - {}) [{}]",
+            string_from_char(&self.Name),
+            string_from_char(&self.Description),
+            self.MinValue,
+            self.MaxValue,
+            self.ControlType
+        )
+    }
 }
