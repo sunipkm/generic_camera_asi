@@ -38,11 +38,13 @@ use crate::{
 };
 
 use generic_camera::{
-    AnalogCtrl, CustomName, DeviceCtrl, DigitalIoCtrl, ExposureCtrl, GenCam, GenCamCtrl,
-    GenCamInfo, GenCamResult, PropertyError, PropertyValue, SensorCtrl,
+    controls::AnalogCtrl, controls::CustomName, controls::DeviceCtrl, controls::DigitalIoCtrl,
+    controls::ExposureCtrl, controls::SensorCtrl, GenCam, GenCamCtrl, GenCamInfo, GenCamResult,
+    PropertyError, PropertyValue,
 };
 use generic_camera::{
-    GenCamDescriptor, GenCamError, GenCamPixelBpp, GenCamRoi, GenCamState, Property, PropertyLims,
+    property::PropertyLims, GenCamDescriptor, GenCamError, GenCamPixelBpp, GenCamRoi, GenCamState,
+    Property,
 };
 
 use log::warn;

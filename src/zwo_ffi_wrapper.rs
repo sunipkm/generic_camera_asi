@@ -1,8 +1,14 @@
-use std::{collections::HashMap, fmt::{Debug, Display}, os::raw, time::Duration};
+use std::{
+    collections::HashMap,
+    fmt::{Debug, Display},
+    os::raw,
+    time::Duration,
+};
 
 use generic_camera::{
-    AnalogCtrl, DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDescriptor, GenCamError,
-    GenCamPixelBpp, GenCamRoi, Property, PropertyError, PropertyLims, PropertyValue, SensorCtrl,
+    controls::AnalogCtrl, controls::DeviceCtrl, controls::ExposureCtrl, controls::SensorCtrl,
+    property::PropertyLims, property::PropertyType, GenCamCtrl, GenCamDescriptor, GenCamError,
+    GenCamPixelBpp, GenCamRoi, Property, PropertyError, PropertyValue,
 };
 use log::warn;
 
@@ -558,7 +564,7 @@ impl AsiDeviceCtrl {
                 return Err(GenCamError::PropertyError {
                     control: *name,
                     error: PropertyError::InvalidControlType {
-                        expected: generic_camera::PropertyType::Int,
+                        expected: PropertyType::Int,
                         received: value.get_type(),
                     },
                 })

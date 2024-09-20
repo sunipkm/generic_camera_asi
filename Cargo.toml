@@ -15,16 +15,10 @@ An efficient and ergonomic interface to capture images using cameras.
 """
 exclude = [".github"]
 
-[[example]]
-name = "asigeneric_capture"
-path = "examples/main.rs"
-test = true
-bench = false
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-generic-camera = { path = "../generic_camera", default-features = false}
+generic-camera = { version = "0.0" }
 refimage = { version = "<1.0", default-features = false}
 log = "0.4"
 lazy_static = "1.5"
@@ -33,6 +27,3 @@ bytemuck = "1.18"
 [build-dependencies]
 bindgen = "0.70"
 cc = "1.1"
-
-[dev-dependencies]
-fitsio = { version = "0.21" }
