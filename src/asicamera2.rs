@@ -3,9 +3,8 @@ use std::{collections::HashMap, time::Duration};
 
 use generic_camera::{
     AnyGenCamInfo, GenCam, GenCamCtrl, GenCamDescriptor, GenCamDriver, GenCamError, GenCamResult,
-    Property, PropertyValue,
+    Property, PropertyValue, GenericImage
 };
-use refimage::GenericImage;
 
 use crate::{
     asihandle::{get_asi_devs, open_device, AsiImager},

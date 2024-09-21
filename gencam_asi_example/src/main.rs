@@ -1,4 +1,3 @@
-use core::num;
 use std::{
     env,
     io::{self, Write},
@@ -8,16 +7,18 @@ use std::{
         Arc,
     },
     thread::{self, sleep},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime},
 };
 
 use chrono::{DateTime, Local};
 use configparser::ini::Ini;
 use generic_camera_asi::{
-    DeviceCtrl, ExposureCtrl, GenCamCtrl, GenCamDriver, GenCamDriverAsi,
+    controls::DeviceCtrl, controls::ExposureCtrl, GenCamCtrl, GenCamDriver, GenCamDriverAsi,
     PropertyValue,
 };
-use refimage::DynamicImage;
+use refimage::{
+    CalcOptExp, DynamicImage, FitsCompression, FitsWrite, OptimumExposureBuilder, EXPOSURE_KEY,
+};
 
 #[derive(Debug)]
 struct ASICamconfig {
@@ -47,7 +48,7 @@ fn main() {
         cfg.to_ini(&get_out_dir().join("asicam.ini")).unwrap();
         cfg
     });
-    let mut drv = GenCamDriverAsi::default();
+    let mut drv = GenCamDriverAsi;
     let num_cameras = drv.available_devices();
     println!("Found {} cameras", num_cameras);
     if num_cameras == 0 {
@@ -81,12 +82,13 @@ fn main() {
     ctrlc::set_handler(move || {
         done_hdl.store(true, Ordering::SeqCst);
         cam_ctrlc.cancel_capture().unwrap_or(()); // This is NOT dropped!!!
-        cam_ctrlc.set_property(
-            GenCamCtrl::Device(DeviceCtrl::CoolerTemp),
-            &PropertyValue::Int(20 as i64),
-            false,
-        )
-        .unwrap_or(()); // Set cooler to 20 C
+        cam_ctrlc
+            .set_property(
+                GenCamCtrl::Device(DeviceCtrl::CoolerTemp),
+                &PropertyValue::Int(20_i64),
+                false,
+            )
+            .unwrap_or(()); // Set cooler to 20 C
         println!("\nCtrl + C received!");
     })
     .expect("Error setting Ctrl-C handler");
@@ -126,83 +128,122 @@ fn main() {
         false,
     )
     .expect("Error setting exposure time");
-    // let exp_ctrl = OptimumExposureBuilder::default()
-    //     .percentile_pix((cfg.percentile * 0.01) as f32)
-    //     .pixel_tgt(cfg.target_val)
-    //     .pixel_uncertainty(cfg.target_uncertainty)
-    //     .pixel_exclusion(100)
-    //     .min_allowed_exp(cam.get_min_exposure().unwrap_or(Duration::from_millis(1)))
-    //     .max_allowed_exp(cfg.max_exposure)
-    //     .max_allowed_bin(cfg.max_bin as u16)
-    //     .build()
-    //     .unwrap();
+    let props = cam.list_properties();
+    let exp_prop = props
+        .get(&GenCamCtrl::Exposure(ExposureCtrl::ExposureTime))
+        .expect("Error getting exposure property");
+    let exp_ctrl = OptimumExposureBuilder::default()
+        .percentile_pix((cfg.percentile * 0.01) as f32)
+        .pixel_tgt(cfg.target_val)
+        .pixel_uncertainty(cfg.target_uncertainty)
+        .pixel_exclusion(100)
+        .min_allowed_exp(
+            exp_prop
+                .get_min()
+                .expect("Property does not contain minimum value")
+                .try_into()
+                .expect("Error getting min exposure"),
+        )
+        .max_allowed_exp(cfg.max_exposure)
+        .max_allowed_bin(cfg.max_bin as u16)
+        .build()
+        .unwrap();
+    let mut last_saved = None;
     while !done.load(Ordering::SeqCst) {
-        let roi = cam.get_roi();
-        println!(
-            "ROI: {}x{} @ {}x{}",
-            roi.width, roi.height, roi.x_min, roi.y_min
-        );
+        let _roi = cam.get_roi();
+        // println!(
+        //     "ROI: {}x{} @ {}x{}",
+        //     roi.width, roi.height, roi.x_min, roi.y_min
+        // );
         let exp_start = Local::now();
         let estart = Instant::now();
         let Ok(img) = cam.capture() else {
             break;
         };
-        let dir_prefix = Path::new(&cfg.savedir).join(exp_start.format("%Y%m%d").to_string());
-        if !dir_prefix.exists() {
-            std::fs::create_dir_all(&dir_prefix).unwrap();
-        }
-        let img = DynamicImage::try_from(img.get_image().clone()).expect("Error converting image");
-        img.save(&dir_prefix.join(exp_start.format("%H%M%S%.3f.png").to_string()))
-            .expect("Error saving image");
-        // let res = img.savefits(&dir_prefix, "comic", Some(&cfg.progname), true, true);
-        // if let Err(res) = res {
-        //     let res = match res {
-        //         fitsio::errors::Error::ExistingFile(res) => res,
-        //         fitsio::errors::Error::Fits(_) => "Fits Error".to_string(),
-        //         fitsio::errors::Error::Index(_) => "Index error".to_string(),
-        //         fitsio::errors::Error::IntoString(_) => "Into string".to_string(),
-        //         fitsio::errors::Error::Io(_) => "IO Error".to_string(),
-        //         fitsio::errors::Error::Message(res) => res,
-        //         fitsio::errors::Error::Null(_) => "NULL Error".to_string(),
-        //         fitsio::errors::Error::NullPointer => "Nullptr".to_string(),
-        //         fitsio::errors::Error::UnlockError => "Unlock error".to_string(),
-        //         fitsio::errors::Error::Utf8(_) => "UTF-8 error".to_string(),
-        //     };
 
-        //     println!(
-        //         "\n[{}] AERO: Error saving image: {:#?}",
-        //         exp_start.format("%H:%M:%S"),
-        //         res
-        //     );
-        // } else {
-        //     println!(
-        //         "\n[{}] AERO: Saved image, exposure {:.3} s",
-        //         exp_start.format("%H:%M:%S"),
-        //         cam.get_exposure().as_secs_f32()
-        //     );
-        // }
-        // let (exposure, _bin) = exp_ctrl
-        //     .calculate(
-        //         img.into_luma().into_vec(),
-        //         img.get_metadata().unwrap().exposure,
-        //         img.get_metadata().unwrap().bin_x as u8,
-        //     )
-        //     .unwrap_or((Duration::from_millis(100), 1));
-        // if exposure != cam.get_exposure() {
-        //     println!(
-        //         "\n[{}] AERO: Exposure changed from {:.3} s to {:.3} s",
-        //         exp_start.format("%H:%M:%S"),
-        //         cam.get_exposure().as_secs_f32(),
-        //         exposure.as_secs_f32()
-        //     );
-        //     cam.set_exposure(exposure).unwrap();
-        // }
-        while !done.load(Ordering::SeqCst) {
-            let elapsed = estart.elapsed();
-            if elapsed > cfg.cadence {
-                break;
+        let save = if last_saved.is_none() {
+            true
+        } else {
+            let elapsed = estart.duration_since(last_saved.unwrap());
+            elapsed > cfg.cadence
+        };
+        if let Some(exp) = img.get_metadata().iter().find(|k| k.name() == EXPOSURE_KEY) {
+            let exp = exp
+                .get_value()
+                .get_value_duration()
+                .expect("Could not get exposure");
+
+            if save {
+                last_saved = Some(estart);
+                let dir_prefix =
+                    Path::new(&cfg.savedir).join(exp_start.format("%Y%m%d").to_string());
+                if !dir_prefix.exists() {
+                    std::fs::create_dir_all(&dir_prefix).unwrap();
+                }
+                let dimg = DynamicImage::try_from(img.get_image().clone())
+                    .expect("Error converting image");
+                dimg.save(dir_prefix.join(exp_start.format("%H%M%S%.3f.png").to_string()))
+                    .expect("Error saving image");
+
+                let res = img.write_fits(
+                    &dir_prefix
+                        .as_path()
+                        .join(exp_start.format("%Y%m%d%H%M%S").to_string()),
+                    FitsCompression::None,
+                    true,
+                );
+                if let Err(res) = res {
+                    let res = match res {
+                        refimage::FitsError::ExistingFile(res) => res,
+                        refimage::FitsError::Fits(_) => "Fits Error".to_string(),
+                        refimage::FitsError::Index(_) => "Index error".to_string(),
+                        refimage::FitsError::IntoString(_) => "Into string".to_string(),
+                        refimage::FitsError::Io(_) => "IO Error".to_string(),
+                        refimage::FitsError::Message(res) => res,
+                        refimage::FitsError::Null(_) => "NULL Error".to_string(),
+                        refimage::FitsError::NullPointer => "Nullptr".to_string(),
+                        refimage::FitsError::UnlockError => "Unlock error".to_string(),
+                        refimage::FitsError::Utf8(_) => "UTF-8 error".to_string(),
+                    };
+
+                    println!(
+                        "\n[{}] AERO: Error saving image: {:#?}",
+                        exp_start.format("%H:%M:%S"),
+                        res
+                    );
+                } else {
+                    println!(
+                        "\n[{}] AERO: Saved image, exposure {:.3} s",
+                        exp_start.format("%H:%M:%S"),
+                        exp.as_secs_f32()
+                    );
+                }
             }
-            sleep(Duration::from_secs(1).min(cfg.cadence - elapsed));
+
+            let dimg = img
+                .into_luma()
+                .expect("Could not calculate luminance value")
+                .get_image()
+                .clone();
+            let (opt_exp, _) = dimg
+                .calc_opt_exp(&exp_ctrl, exp, 1)
+                .expect("Could not calculate optimal exposure");
+            if opt_exp != exp {
+                println!(
+                    "\n[{}] AERO: Exposure changed from {:.3} s to {:.3} s",
+                    exp_start.format("%H:%M:%S"),
+                    exp.as_secs_f32(),
+                    opt_exp.as_secs_f32()
+                );
+                cam.set_property(
+                    GenCamCtrl::Exposure(ExposureCtrl::ExposureTime),
+                    &opt_exp.into(),
+                    false,
+                )
+                .expect("Error setting exposure time");
+            }
+        } else {
+            println!("\n[{}] AERO: No exposure value found", exp_start.format("%H:%M:%S"));
         }
     }
     camthread.join().unwrap();
@@ -214,7 +255,7 @@ impl Default for ASICamconfig {
         Self {
             progname: "ASICam".to_string(),
             savedir: "./data".to_string(),
-            cadence: Duration::from_secs(1),
+            cadence: Duration::from_secs(10),
             max_exposure: Duration::from_secs(120),
             percentile: 95.0,
             max_bin: 4,

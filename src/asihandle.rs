@@ -15,6 +15,8 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use refimage::EXPOSURE_KEY;
+
 use crate::{
     zwo_ffi::{
         ASICloseCamera, ASIGetCameraProperty, ASIGetCameraPropertyByID, ASIGetControlCaps,
@@ -522,7 +524,7 @@ impl AsiImager {
             "IMGSER",
             (IMGCTR.fetch_add(1, Ordering::SeqCst), "Image serial number"),
         );
-        img.insert_key("EXPOSURE", (expinfo.exposure, "Exposure time"));
+        img.insert_key(EXPOSURE_KEY, (expinfo.exposure, "Exposure time"));
         img.insert_key(
             "EXPTIME",
             (expinfo.exposure.as_secs_f64(), "Exposure time in seconds"),
