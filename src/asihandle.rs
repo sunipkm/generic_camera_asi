@@ -46,12 +46,12 @@ use generic_camera::{
 };
 use generic_camera::{
     property::PropertyLims, GenCamDescriptor, GenCamError, GenCamPixelBpp, GenCamRoi, GenCamState,
-    Property,
+    GenericImage, Property,
 };
 
 use log::warn;
 use refimage::ColorSpace;
-use refimage::{DynamicImageData, GenericImage, ImageData};
+use refimage::{DynamicImageData, ImageData};
 
 pub(crate) fn get_asi_devs() -> Result<Vec<GenCamDescriptor>, AsiError> {
     fn get_sn(handle: i32) -> Option<String> {

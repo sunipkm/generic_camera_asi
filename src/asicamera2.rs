@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 
 use generic_camera::{
     AnyGenCamInfo, GenCam, GenCamCtrl, GenCamDescriptor, GenCamDriver, GenCamError, GenCamResult,
-    Property, PropertyValue, GenericImage
+    GenericImage, Property, PropertyValue,
 };
 
 use crate::{

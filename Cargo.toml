@@ -27,3 +27,7 @@ bytemuck = "1.18"
 [build-dependencies]
 bindgen = "0.70"
 cc = "1.1"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
