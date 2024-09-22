@@ -167,7 +167,7 @@ fn main() {
             let elapsed = estart.duration_since(last_saved.unwrap());
             elapsed > cfg.cadence
         };
-        if let Some(exp) = img.get_metadata().iter().find(|k| k.name() == EXPOSURE_KEY) {
+        if let Some(exp) = img.get_metadata().get(EXPOSURE_KEY) {
             let exp = exp
                 .get_value()
                 .get_value_duration()

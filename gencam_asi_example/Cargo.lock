@@ -80,6 +80,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 
 [[package]]
+name = "autotools"
+version = "0.2.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef941527c41b0fc0dd48511a8154cd5fc7e29200a0ff8b7203c5d777dbc795cf"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "av1-grain"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -382,6 +391,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "fitsio"
+version = "0.21.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0cdb3dff2b25ec4e296f3289f7242054e174921ddffdf4772ee715d0c668c629"
+dependencies = [
+ "fitsio-sys",
+ "libc",
+]
+
+[[package]]
+name = "fitsio-sys"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f4465f848d35a6e1b41ba0370d8bb1d61774bdfd1549f45222c79b2e46229d4"
+dependencies = [
+ "autotools",
+ "pkg-config",
+]
+
+[[package]]
 name = "flate2"
 version = "1.0.33"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -413,7 +442,9 @@ dependencies = [
 
 [[package]]
 name = "generic-camera"
-version = "0.0.2"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed2fdeeaf7bf85480da8997cb94848da3831e7e6e4f64b2ef7c2979a6dfef7ac"
 dependencies = [
  "documented",
  "refimage",
@@ -423,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "generic-camera-asi"
-version = "0.0.1"
+version = "0.0.2"
 dependencies = [
  "bindgen",
  "bytemuck",
@@ -1052,15 +1083,17 @@ dependencies = [
 
 [[package]]
 name = "refimage"
-version = "0.5.1"
+version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36cb125410839b76f25d35e540acf0c465628362b21336493e458fa619f4aefc"
+checksum = "fd62e9bad7a4e3024fac70b38fe3b346599d8232ac4101aa30960c42f019f1c3"
 dependencies = [
  "bytemuck",
  "chrono",
  "crc32fast",
+ "fitsio",
  "flate2",
  "image",
+ "itertools 0.13.0",
  "num-traits",
  "quick-error",
  "rayon",

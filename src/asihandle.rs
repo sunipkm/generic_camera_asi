@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use refimage::EXPOSURE_KEY;
+use refimage::{BayerPattern, BayerShift, EXPOSURE_KEY};
 
 use crate::{
     zwo_ffi::{
@@ -218,10 +218,10 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
     name[..len].copy_from_slice(&sname_ref[..len]);
     let bayer = if info.IsColorCam == ASI_BOOL_ASI_TRUE as _ {
         match info.BayerPattern {
-            ASI_BAYER_PATTERN_ASI_BAYER_BG => ColorSpace::Bggr,
-            ASI_BAYER_PATTERN_ASI_BAYER_GB => ColorSpace::Gbrg,
-            ASI_BAYER_PATTERN_ASI_BAYER_GR => ColorSpace::Grbg,
-            ASI_BAYER_PATTERN_ASI_BAYER_RG => ColorSpace::Rggb,
+            ASI_BAYER_PATTERN_ASI_BAYER_BG => BayerPattern::Bggr.into(),
+            ASI_BAYER_PATTERN_ASI_BAYER_GB => BayerPattern::Gbrg.into(),
+            ASI_BAYER_PATTERN_ASI_BAYER_GR => BayerPattern::Grbg.into(),
+            ASI_BAYER_PATTERN_ASI_BAYER_RG => BayerPattern::Rggb.into(),
             _ => ColorSpace::Gray,
         }
     } else {
@@ -489,6 +489,10 @@ impl AsiImager {
         let width = roi.width as _;
         let height = roi.height as _;
         let ptr = &mut self.imgstor;
+        let mut cspace = self.cspace.clone();
+        if let ColorSpace::Bayer(pat) = cspace {
+            cspace = pat.shift(roi.x_min.into(), roi.y_min.into()).into();
+        }
         let img: DynamicImageData = match bpp {
             GenCamPixelBpp::Bpp8 => {
                 let ptr = bytemuck::try_cast_slice_mut(ptr)
@@ -497,7 +501,7 @@ impl AsiImager {
                     &mut ptr[..(width * height)],
                     width,
                     height,
-                    refimage::ColorSpace::Gray,
+                    cspace,
                 )
                 .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
                 DynamicImageData::U8(img)
@@ -507,7 +511,7 @@ impl AsiImager {
                     &mut ptr[..(width * height)],
                     width,
                     height,
-                    refimage::ColorSpace::Gray,
+                    cspace,
                 )
                 .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
                 DynamicImageData::U16(img)
@@ -561,19 +565,6 @@ impl AsiImager {
             ),
         );
         if ColorSpace::Gray != self.cspace {
-            img.insert_key(
-                "BAYERPAT",
-                (
-                    match self.cspace {
-                        ColorSpace::Bggr => "BGGR",
-                        ColorSpace::Gbrg => "GBRG",
-                        ColorSpace::Grbg => "GRBG",
-                        ColorSpace::Rggb => "RGGB",
-                        _ => "Unknown",
-                    },
-                    "Bayer pattern",
-                ),
-            );
             img.insert_key("XBAYOFF", (roi.x_min % 2, "X offset of Bayer pattern"));
             img.insert_key("YBAYOFF", (roi.y_min % 2, "Y offset of Bayer pattern"));
         }
