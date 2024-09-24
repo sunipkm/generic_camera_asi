@@ -862,7 +862,7 @@ pub(crate) fn to_asibool(v: bool) -> ASI_BOOL {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub(crate) struct AsiHandle(i32);
 
 impl AsiHandle {
@@ -896,7 +896,7 @@ impl From<AsiHandle> for i32 {
 
 impl Drop for AsiHandle {
     fn drop(&mut self) {
-        let handle = self.clone().into();
+        let handle = self.handle();
         if let Err(e) = ASICALL!(ASIStopExposure(handle)) {
             warn!("Failed to stop exposure: {:?}", e);
         }

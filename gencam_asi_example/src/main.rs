@@ -17,7 +17,7 @@ use generic_camera_asi::{
     PropertyValue,
 };
 use refimage::{
-    CalcOptExp, DynamicImage, FitsCompression, FitsWrite, OptimumExposureBuilder, EXPOSURE_KEY,
+    CalcOptExp, Debayer, DemosaicMethod::Linear, DynamicImage, FitsCompression, FitsWrite, OptimumExposureBuilder, EXPOSURE_KEY
 };
 
 #[derive(Debug)]
@@ -166,6 +166,12 @@ fn main() {
         } else {
             let elapsed = estart.duration_since(last_saved.unwrap());
             elapsed > cfg.cadence
+        };
+        let img = img.clone();
+        let img = if let Ok(dimg) = img.debayer(Linear) {
+            dimg
+        } else {
+            img
         };
         if let Some(exp) = img.get_metadata().get(EXPOSURE_KEY) {
             let exp = exp

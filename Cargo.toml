@@ -1,6 +1,6 @@
 [package]
 name = "generic-camera-asi"
-version = "0.0.3"
+version = "0.0.4"
 edition = "2021"
 rust-version = "1.68.0"
 authors = ["Sunip K. Mukherjee"]
