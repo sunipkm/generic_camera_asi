@@ -53,3 +53,5 @@ let img = cam
 ```
 
 For a more complete example, refer to the [bundled program](gencam_asi_example/src/main.rs).
+## Features
+Activate the `bayerswap` feature to swap the Bayer mosaic conversion.

@@ -442,9 +442,9 @@ dependencies = [
 
 [[package]]
 name = "generic-camera"
-version = "0.0.4"
+version = "0.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed2fdeeaf7bf85480da8997cb94848da3831e7e6e4f64b2ef7c2979a6dfef7ac"
+checksum = "50a2b1ccc5568e406ead5c73935cfcd42faa9770732a6119c8310185fc9f55c5"
 dependencies = [
  "documented",
  "refimage",
@@ -454,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "generic-camera-asi"
-version = "0.0.2"
+version = "0.0.5"
 dependencies = [
  "bindgen",
  "bytemuck",
@@ -1083,9 +1083,9 @@ dependencies = [
 
 [[package]]
 name = "refimage"
-version = "0.8.2"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fd62e9bad7a4e3024fac70b38fe3b346599d8232ac4101aa30960c42f019f1c3"
+checksum = "ea1d463ca94c94d6cd9121fe2cf1e96eae46993765ffdd214fcf8354f5c5a875"
 dependencies = [
  "bytemuck",
  "chrono",
@@ -1095,9 +1095,9 @@ dependencies = [
  "image",
  "itertools 0.13.0",
  "num-traits",
- "quick-error",
  "rayon",
  "serde",
+ "thiserror",
 ]
 
 [[package]]

@@ -100,6 +100,7 @@ pub(crate) struct LastExposureInfo {
     pub exposure: Duration,
     pub darkframe: bool,
     pub gain: Option<i64>,
+    pub flip: Option<(bool, bool)>,
 }
 
 #[derive(Debug)]
@@ -217,11 +218,20 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
     let len = sname.len().min(20);
     name[..len].copy_from_slice(&sname_ref[..len]);
     let bayer = if info.IsColorCam == ASI_BOOL_ASI_TRUE as _ {
+        #[cfg(not(feature = "bayerswap"))]
         match info.BayerPattern {
             ASI_BAYER_PATTERN_ASI_BAYER_BG => BayerPattern::Bggr.into(),
             ASI_BAYER_PATTERN_ASI_BAYER_GB => BayerPattern::Gbrg.into(),
             ASI_BAYER_PATTERN_ASI_BAYER_GR => BayerPattern::Grbg.into(),
             ASI_BAYER_PATTERN_ASI_BAYER_RG => BayerPattern::Rggb.into(),
+            _ => ColorSpace::Gray,
+        }
+        #[cfg(feature = "bayerswap")]
+        match info.BayerPattern {
+            ASI_BAYER_PATTERN_ASI_BAYER_BG => BayerPattern::Grbg.into(),
+            ASI_BAYER_PATTERN_ASI_BAYER_GB => BayerPattern::Rggb.into(),
+            ASI_BAYER_PATTERN_ASI_BAYER_GR => BayerPattern::Bggr.into(),
+            ASI_BAYER_PATTERN_ASI_BAYER_RG => BayerPattern::Gbrg.into(),
             _ => ColorSpace::Gray,
         }
     } else {
@@ -389,6 +399,7 @@ impl AsiImager {
             exposure: Duration::from_micros(self.exposure.load(Ordering::SeqCst)),
             darkframe,
             gain: self.get_gain().ok(),
+            flip: self.get_flip().ok(),
         };
         if let Ok(mut start) = self.start.write() {
             *start = Some(Instant::now());
@@ -491,7 +502,16 @@ impl AsiImager {
         let ptr = &mut self.imgstor;
         let mut cspace = self.cspace.clone();
         if let ColorSpace::Bayer(pat) = cspace {
-            cspace = pat.shift(roi.x_min.into(), roi.y_min.into()).into();
+            let mut pat = pat.shift(roi.x_min.into(), roi.y_min.into());
+            if let Some((flip_x, flip_y)) = expinfo.flip {
+                if flip_x {
+                    pat = pat.flip_horizontal();
+                }
+                if flip_y {
+                    pat = pat.flip_vertical();
+                }
+            }
+            cspace = pat.into()
         }
         let img: DynamicImageRef = match bpp {
             GenCamPixelBpp::Bpp8 => {

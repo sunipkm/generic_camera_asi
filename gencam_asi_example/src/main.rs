@@ -17,8 +17,7 @@ use generic_camera_asi::{
     PropertyValue,
 };
 use refimage::{
-    CalcOptExp, DynamicImage, FitsCompression, FitsWrite, GenericImage, OptimumExposureBuilder,
-    ToLuma,
+    CalcOptExp, ColorSpace, Debayer, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage, GenericImageOwned, ImageProps, OptimumExposureBuilder, ToLuma
 };
 
 #[derive(Debug)]
@@ -161,7 +160,7 @@ fn main() {
         let Ok(img) = cam.capture() else {
             break;
         };
-        let img: GenericImage = img.into();
+        let mut img: GenericImage = img.into();
         let save = if last_saved.is_none() {
             true
         } else {
@@ -169,17 +168,14 @@ fn main() {
             elapsed > cfg.cadence
         };
         if let Some(exp) = img.get_exposure() {
+            // save the raw FITS image
             if save {
                 last_saved = Some(estart);
                 let dir_prefix =
                     Path::new(&cfg.savedir).join(exp_start.format("%Y%m%d").to_string());
                 if !dir_prefix.exists() {
-                    std::fs::create_dir_all(&dir_prefix).unwrap();
+                    std::fs::create_dir_all(&dir_prefix).unwrap_or_else(|e| panic!("Creating directory {:#?}: Error {e:?}", dir_prefix));
                 }
-                let dimg = DynamicImage::try_from(img.clone()).expect("Error converting image");
-                dimg.save(dir_prefix.join(exp_start.format("%H%M%S%.3f.png").to_string()))
-                    .expect("Error saving image");
-
                 let res = img.write_fits(
                     &dir_prefix
                         .as_path()
@@ -214,10 +210,27 @@ fn main() {
                     );
                 }
             }
-
-            let dimg = img
-                .to_luma()
-                .expect("Could not calculate luminance value");
+            // debayer the image if it is a Bayer image
+            if let ColorSpace::Bayer(_) = img.color_space() {
+                let dimg: GenericImageOwned = img.clone().into();
+                img = dimg
+                    .debayer(DemosaicMethod::Nearest)
+                    .expect("Error debayering image")
+                    .into();
+            }
+            // save the debayerd image as PNG if saving
+            if save {
+                let dir_prefix =
+                    Path::new(&cfg.savedir).join(exp_start.format("%Y%m%d").to_string());
+                if !dir_prefix.exists() {
+                    std::fs::create_dir_all(&dir_prefix).unwrap();
+                }
+                let dimg = DynamicImage::try_from(img.clone()).expect("Error converting image");
+                dimg.save(dir_prefix.join(exp_start.format("%H%M%S%.3f.png").to_string()))
+                    .expect("Error saving image");
+            }
+            // calculate the optimal exposure
+            let dimg = img.to_luma().expect("Could not calculate luminance value");
             let (opt_exp, _) = dimg
                 .calc_opt_exp(&exp_ctrl, exp, 1)
                 .expect("Could not calculate optimal exposure");
