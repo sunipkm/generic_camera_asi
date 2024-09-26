@@ -15,7 +15,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use refimage::{BayerPattern, BayerShift, EXPOSURE_KEY};
+use refimage::{BayerPattern, BayerShift, GenericImageRef, EXPOSURE_KEY};
 
 use crate::{
     zwo_ffi::{
@@ -51,7 +51,7 @@ use generic_camera::{
 
 use log::warn;
 use refimage::ColorSpace;
-use refimage::{DynamicImageData, ImageData};
+use refimage::{DynamicImageRef, ImageRef};
 
 pub(crate) fn get_asi_devs() -> Result<Vec<GenCamDescriptor>, AsiError> {
     fn get_sn(handle: i32) -> Option<String> {
@@ -432,7 +432,7 @@ impl AsiImager {
         res
     }
 
-    pub fn download_image(&mut self) -> Result<GenericImage, GenCamError> {
+    pub fn download_image(&mut self) -> Result<GenericImageRef, GenCamError> {
         lazy_static::lazy_static! {
             static ref IMGCTR: AtomicU32 = AtomicU32::new(0);
         };
@@ -493,28 +493,18 @@ impl AsiImager {
         if let ColorSpace::Bayer(pat) = cspace {
             cspace = pat.shift(roi.x_min.into(), roi.y_min.into()).into();
         }
-        let img: DynamicImageData = match bpp {
+        let img: DynamicImageRef = match bpp {
             GenCamPixelBpp::Bpp8 => {
                 let ptr = bytemuck::try_cast_slice_mut(ptr)
                     .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
-                let img = ImageData::from_mut_ref(
-                    &mut ptr[..(width * height)],
-                    width,
-                    height,
-                    cspace,
-                )
-                .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
-                DynamicImageData::U8(img)
+                let img = ImageRef::new(&mut ptr[..(width * height)], width, height, cspace)
+                    .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
+                DynamicImageRef::U8(img)
             }
             GenCamPixelBpp::Bpp16 => {
-                let img = ImageData::from_mut_ref(
-                    &mut ptr[..(width * height)],
-                    width,
-                    height,
-                    cspace,
-                )
-                .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
-                DynamicImageData::U16(img)
+                let img = ImageRef::new(&mut ptr[..(width * height)], width, height, cspace)
+                    .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
+                DynamicImageRef::U16(img)
             }
             _ => {
                 return Err(GenCamError::GeneralError({
@@ -522,7 +512,7 @@ impl AsiImager {
                 }));
             }
         };
-        let mut img = GenericImage::new(expinfo.tstamp, img);
+        let mut img = GenericImageRef::new(expinfo.tstamp, img);
         let info = &(*self.info);
         img.insert_key(
             "IMGSER",

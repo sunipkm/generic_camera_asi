@@ -18,8 +18,8 @@ exclude = [".github"]
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-generic-camera = "=0.0.4"
-refimage = { version = "<1.0", default-features = false}
+generic-camera = { version = ">= 0.0.5", default-features = false }
+refimage = { version = ">= 0.10", default-features = false }
 log = "0.4"
 lazy_static = "1.5"
 bytemuck = "1.18"

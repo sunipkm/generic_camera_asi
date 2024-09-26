@@ -8,4 +8,4 @@ chrono = "0.4.38"
 configparser = "3.1.0"
 ctrlc = "3.4.5"
 generic-camera-asi = { path = "../" }
-refimage = { version = "<1.0", features = ["default", "image", "fitsio"] }
+refimage = { version = ">= 0.10", features = ["default", "image", "fitsio"] }

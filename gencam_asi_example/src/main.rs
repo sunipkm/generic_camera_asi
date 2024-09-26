@@ -17,7 +17,8 @@ use generic_camera_asi::{
     PropertyValue,
 };
 use refimage::{
-    CalcOptExp, Debayer, DemosaicMethod::Linear, DynamicImage, FitsCompression, FitsWrite, OptimumExposureBuilder, EXPOSURE_KEY
+    CalcOptExp, DynamicImage, FitsCompression, FitsWrite, GenericImage, OptimumExposureBuilder,
+    ToLuma,
 };
 
 #[derive(Debug)]
@@ -160,25 +161,14 @@ fn main() {
         let Ok(img) = cam.capture() else {
             break;
         };
-
+        let img: GenericImage = img.into();
         let save = if last_saved.is_none() {
             true
         } else {
             let elapsed = estart.duration_since(last_saved.unwrap());
             elapsed > cfg.cadence
         };
-        let img = img.clone();
-        let img = if let Ok(dimg) = img.debayer(Linear) {
-            dimg
-        } else {
-            img
-        };
-        if let Some(exp) = img.get_metadata().get(EXPOSURE_KEY) {
-            let exp = exp
-                .get_value()
-                .get_value_duration()
-                .expect("Could not get exposure");
-
+        if let Some(exp) = img.get_exposure() {
             if save {
                 last_saved = Some(estart);
                 let dir_prefix =
@@ -186,8 +176,7 @@ fn main() {
                 if !dir_prefix.exists() {
                     std::fs::create_dir_all(&dir_prefix).unwrap();
                 }
-                let dimg = DynamicImage::try_from(img.get_image().clone())
-                    .expect("Error converting image");
+                let dimg = DynamicImage::try_from(img.clone()).expect("Error converting image");
                 dimg.save(dir_prefix.join(exp_start.format("%H%M%S%.3f.png").to_string()))
                     .expect("Error saving image");
 
@@ -227,10 +216,8 @@ fn main() {
             }
 
             let dimg = img
-                .into_luma()
-                .expect("Could not calculate luminance value")
-                .get_image()
-                .clone();
+                .to_luma()
+                .expect("Could not calculate luminance value");
             let (opt_exp, _) = dimg
                 .calc_opt_exp(&exp_ctrl, exp, 1)
                 .expect("Could not calculate optimal exposure");
@@ -249,7 +236,10 @@ fn main() {
                 .expect("Error setting exposure time");
             }
         } else {
-            println!("\n[{}] AERO: No exposure value found", exp_start.format("%H:%M:%S"));
+            println!(
+                "\n[{}] AERO: No exposure value found",
+                exp_start.format("%H:%M:%S")
+            );
         }
     }
     camthread.join().unwrap();

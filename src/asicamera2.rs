@@ -3,8 +3,9 @@ use std::{collections::HashMap, time::Duration};
 
 use generic_camera::{
     AnyGenCamInfo, GenCam, GenCamCtrl, GenCamDescriptor, GenCamDriver, GenCamError, GenCamResult,
-    GenericImage, Property, PropertyValue,
+    Property, PropertyValue,
 };
+use refimage::GenericImageRef;
 
 use crate::{
     asihandle::{get_asi_devs, open_device, AsiImager},
@@ -100,7 +101,7 @@ impl GenCam for GenCamAsi {
         self.handle.image_ready()
     }
 
-    fn download_image(&mut self) -> GenCamResult<GenericImage> {
+    fn download_image(&mut self) -> GenCamResult<GenericImageRef> {
         self.handle.download_image()
     }
 
@@ -141,7 +142,7 @@ impl GenCam for GenCamAsi {
         self.handle.is_capturing()
     }
 
-    fn capture(&mut self) -> GenCamResult<GenericImage> {
+    fn capture(&mut self) -> GenCamResult<GenericImageRef> {
         let (exp, _) = self.handle.get_exposure()?;
         self.handle.start_exposure()?;
         std::thread::sleep(exp);
