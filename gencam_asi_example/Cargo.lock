@@ -437,6 +437,7 @@ dependencies = [
  "configparser",
  "ctrlc",
  "generic-camera-asi",
+ "image",
  "refimage",
 ]
 

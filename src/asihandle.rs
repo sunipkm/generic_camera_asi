@@ -635,17 +635,34 @@ impl AsiImager {
                 error: PropertyError::NotFound,
             });
         };
-        let (ctrl, lims) = match prop {
-            GenCamCtrl::Device(_) => {
-                return self.device_ctrl.set_value(&self.handle, prop, value, auto);
+        let (ctrl, lims) = {
+            match prop {
+                GenCamCtrl::Device(ctrl) => {
+                    if ctrl == &DeviceCtrl::CoolerTemp {
+                        ASICALL!(ASISetControlValue(
+                            self.handle.handle(),
+                            ASI_CONTROL_TYPE_ASI_COOLER_ON as _,
+                            1,
+                            0
+                        ))
+                        .map_err(|e| match e {
+                            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+                            AsiError::InvalidId(_, _) => {
+                                GenCamError::InvalidId(self.handle.handle())
+                            }
+                            _ => GenCamError::GeneralError(format!("{:?}", e)),
+                        })?;
+                    }
+                    return self.device_ctrl.set_value(&self.handle, prop, value, auto);
+                }
+                _ => self
+                    .sensor_ctrl
+                    .get_controller(prop)
+                    .ok_or(GenCamError::PropertyError {
+                        control: *prop,
+                        error: PropertyError::NotFound,
+                    })?,
             }
-            _ => self
-                .sensor_ctrl
-                .get_controller(prop)
-                .ok_or(GenCamError::PropertyError {
-                    control: *prop,
-                    error: PropertyError::NotFound,
-                })?,
         };
         lims.validate(value)
             .map_err(|e| GenCamError::PropertyError {

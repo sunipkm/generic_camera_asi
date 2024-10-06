@@ -20,6 +20,8 @@ use refimage::{
     CalcOptExp, ColorSpace, Debayer, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage, GenericImageOwned, ImageProps, OptimumExposureBuilder, ToLuma
 };
 
+use image::imageops::FilterType;
+
 #[derive(Debug)]
 struct ASICamconfig {
     progname: String,
@@ -176,39 +178,13 @@ fn main() {
                 if !dir_prefix.exists() {
                     std::fs::create_dir_all(&dir_prefix).unwrap_or_else(|e| panic!("Creating directory {:#?}: Error {e:?}", dir_prefix));
                 }
-                let res = img.write_fits(
-                    &dir_prefix
-                        .as_path()
-                        .join(exp_start.format("%Y%m%d%H%M%S").to_string()),
-                    FitsCompression::None,
-                    true,
+                
+                println!(
+                    "\n[{}] AERO: Saved image, exposure {:.3} s",
+                    exp_start.format("%H:%M:%S"),
+                    exp.as_secs_f32()
                 );
-                if let Err(res) = res {
-                    let res = match res {
-                        refimage::FitsError::ExistingFile(res) => res,
-                        refimage::FitsError::Fits(_) => "Fits Error".to_string(),
-                        refimage::FitsError::Index(_) => "Index error".to_string(),
-                        refimage::FitsError::IntoString(_) => "Into string".to_string(),
-                        refimage::FitsError::Io(_) => "IO Error".to_string(),
-                        refimage::FitsError::Message(res) => res,
-                        refimage::FitsError::Null(_) => "NULL Error".to_string(),
-                        refimage::FitsError::NullPointer => "Nullptr".to_string(),
-                        refimage::FitsError::UnlockError => "Unlock error".to_string(),
-                        refimage::FitsError::Utf8(_) => "UTF-8 error".to_string(),
-                    };
-
-                    println!(
-                        "\n[{}] AERO: Error saving image: {:#?}",
-                        exp_start.format("%H:%M:%S"),
-                        res
-                    );
-                } else {
-                    println!(
-                        "\n[{}] AERO: Saved image, exposure {:.3} s",
-                        exp_start.format("%H:%M:%S"),
-                        exp.as_secs_f32()
-                    );
-                }
+            
             }
             // debayer the image if it is a Bayer image
             if let ColorSpace::Bayer(_) = img.color_space() {
@@ -226,6 +202,7 @@ fn main() {
                     std::fs::create_dir_all(&dir_prefix).unwrap();
                 }
                 let dimg = DynamicImage::try_from(img.clone()).expect("Error converting image");
+                let dimg = dimg.resize(1024, 1024, FilterType::Nearest);
                 dimg.save(dir_prefix.join(exp_start.format("%H%M%S%.3f.png").to_string()))
                     .expect("Error saving image");
             }

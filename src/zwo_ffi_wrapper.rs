@@ -106,8 +106,8 @@ impl From<ASI_CAMERA_INFO> for GenCamDescriptor {
         let name = string_from_char(&value.Name);
         let mut info = HashMap::new();
         info.insert("Camera ID".to_string(), (value.CameraID as i64).into());
-        info.insert("Sensor Height".to_string(), value.MaxHeight.into());
-        info.insert("Sensor Width".to_string(), value.MaxWidth.into());
+        info.insert("Sensor Height".to_string(), (value.MaxHeight as i64).into());
+        info.insert("Sensor Width".to_string(), (value.MaxWidth as i64).into());
         info.insert(
             "Color Sensor".to_string(),
             (value.IsColorCam == ASI_BOOL_ASI_TRUE as _).into(),
@@ -182,7 +182,7 @@ pub fn get_control_value(handle: i32, control: AsiControlType) -> Result<(i64, i
         AsiError::InvalidControlType(_, _) => GenCamError::InvalidControlType(control.to_string()),
         _ => GenCamError::GeneralError(format!("{:?}", e)),
     })?;
-    Ok((value, auto))
+    Ok((value as _, auto as _))
 }
 
 pub fn set_control_value(
@@ -234,10 +234,10 @@ pub(crate) fn map_control_cap(
                 Gain,
                 Property::new(
                     PropertyLims::Int {
-                        min: obj.MinValue,
-                        max: obj.MaxValue,
+                        min: obj.MinValue as _,
+                        max: obj.MaxValue as _,
                         step: 1,
-                        default: obj.DefaultValue,
+                        default: obj.DefaultValue as _,
                     },
                     obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                     obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
@@ -250,10 +250,10 @@ pub(crate) fn map_control_cap(
                 Gamma,
                 Property::new(
                     PropertyLims::Int {
-                        min: obj.MinValue,
-                        max: obj.MaxValue,
+                        min: obj.MinValue as _,
+                        max: obj.MaxValue as _,
                         step: 1,
-                        default: obj.DefaultValue,
+                        default: obj.DefaultValue as _,
                     },
                     obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                     obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
@@ -298,10 +298,10 @@ pub(crate) fn map_control_cap(
                 AutoExpTarget,
                 Property::new(
                     PropertyLims::Int {
-                        min: obj.MinValue,
-                        max: obj.MaxValue,
+                        min: obj.MinValue as _,
+                        max: obj.MaxValue as _,
                         step: 1,
-                        default: obj.DefaultValue,
+                        default: obj.DefaultValue as _,
                     },
                     obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                     obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
@@ -314,10 +314,10 @@ pub(crate) fn map_control_cap(
                 AutoExpMaxGain,
                 Property::new(
                     PropertyLims::Int {
-                        min: obj.MinValue,
-                        max: obj.MaxValue,
+                        min: obj.MinValue as _,
+                        max: obj.MaxValue as _,
                         step: 1,
-                        default: obj.DefaultValue,
+                        default: obj.DefaultValue as _,
                     },
                     obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                     obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
@@ -330,10 +330,10 @@ pub(crate) fn map_control_cap(
                 HighSpeedMode,
                 Property::new(
                     PropertyLims::Int {
-                        min: obj.MinValue,
-                        max: obj.MaxValue,
+                        min: obj.MinValue as _,
+                        max: obj.MaxValue as _,
                         step: 1,
-                        default: obj.DefaultValue,
+                        default: obj.DefaultValue as _,
                     },
                     obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                     obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
@@ -362,10 +362,10 @@ pub(crate) fn map_control_cap(
                 CoolerPowerPercent,
                 Property::new(
                     PropertyLims::Int {
-                        min: obj.MinValue,
-                        max: obj.MaxValue,
+                        min: obj.MinValue as _,
+                        max: obj.MaxValue as _,
                         step: 1,
-                        default: obj.DefaultValue,
+                        default: obj.DefaultValue as _,
                     },
                     obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                     obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
@@ -378,10 +378,10 @@ pub(crate) fn map_control_cap(
                 TargetTemp,
                 Property::new(
                     PropertyLims::Int {
-                        min: obj.MinValue,
-                        max: obj.MaxValue,
+                        min: obj.MinValue as _,
+                        max: obj.MaxValue as _,
                         step: 1,
-                        default: obj.DefaultValue,
+                        default: obj.DefaultValue as _,
                     },
                     obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                     obj.IsWritable != ASI_BOOL_ASI_TRUE as _,
