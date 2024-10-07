@@ -10,7 +10,3 @@ ctrlc = "3.4.5"
 generic-camera-asi = { path = "../generic_camera_asi" }
 refimage = { version = ">= 0.10", features = ["default", "image", "fitsio"] }
 image = "0.25"
-tungstenite = "0.24"
-gencam_packet = { git = "https://github.com/mitbailey/gencam_packet.git" }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
