@@ -117,6 +117,7 @@ pub(crate) struct AsiImager {
     gain: RefCell<Option<i64>>,
     roi: (GenCamRoi, GenCamPixelBpp),
     last_exposure: RefCell<Option<LastExposureInfo>>,
+    deadline: Instant,
     imgstor: Vec<u16>,
     sensor_ctrl: AsiSensorCtrl,
     // Shared with GenCamInfo
@@ -124,7 +125,7 @@ pub(crate) struct AsiImager {
     capturing: Arc<AtomicBool>,
     info: Arc<GenCamDescriptor>, // cloned to GenCamInfo
     device_ctrl: Arc<AsiDeviceCtrl>,
-    start: Arc<RwLock<Option<Instant>>>,
+    expstart: Option<Instant>,
 }
 
 /// [`GenCamInfoAsi`] implements the [`GenCamInfo`] trait for ASI cameras.
@@ -155,7 +156,6 @@ pub struct GenCamInfoAsi {
     pub(crate) capturing: Arc<AtomicBool>,
     pub(crate) info: Arc<GenCamDescriptor>,
     pub(crate) ctrl: Arc<AsiDeviceCtrl>,
-    pub(crate) start: Arc<RwLock<Option<Instant>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -258,7 +258,8 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
         sensor_ctrl,
         info: Arc::new(ginfo.clone()),
         device_ctrl: Arc::new(device_ctrl),
-        start: Arc::new(RwLock::new(None)),
+        expstart: None,
+        deadline: Instant::now(),
     };
     out.get_exposure()?;
     Ok(out)
@@ -360,15 +361,11 @@ impl AsiImager {
             }
             // currently capturing
             AsiExposureStatus::Working => {
-                if let Ok(start) = self.start.read() {
-                    start
-                        .map(|t| {
-                            let elapsed = t.elapsed();
-                            GenCamState::Exposing(Some(elapsed))
-                        })
-                        .ok_or(GenCamError::ExposureNotStarted)
+                if let Some(expstart) = self.expstart {
+                    let elapsed = expstart.elapsed();
+                    Ok(GenCamState::Exposing(Some(elapsed)))
                 } else {
-                    Err(GenCamError::AccessViolation)
+                    Ok(GenCamState::Exposing(None))
                 }
             }
             // exposure finished
@@ -381,7 +378,7 @@ impl AsiImager {
         }
     }
 
-    pub fn start_exposure(&self) -> Result<(), GenCamError> {
+    pub fn start_exposure(&mut self) -> Result<(), GenCamError> {
         if self.capturing.load(Ordering::SeqCst) {
             return Err(GenCamError::ExposureInProgress);
         }
@@ -401,10 +398,10 @@ impl AsiImager {
             gain: self.get_gain().ok(),
             flip: self.get_flip().ok(),
         };
-        if let Ok(mut start) = self.start.write() {
-            *start = Some(Instant::now());
-        } else {
-            Err(GenCamError::AccessViolation)?;
+        {
+            let now = Instant::now();
+            self.expstart = Some(now);
+            self.deadline = now + last_exposure.exposure + Duration::from_secs(60);
         }
         ASICALL!(ASIStartExposure(handle, to_asibool(darkframe) as _)).map_err(|e| {
             self.capturing.store(false, Ordering::SeqCst);
@@ -469,11 +466,7 @@ impl AsiImager {
             AsiExposureStatus::Idle => {
                 self.capturing.store(false, Ordering::SeqCst);
                 *expinfo = None;
-                let _ = self
-                    .start
-                    .try_write()
-                    .map_err(|_| GenCamError::AccessViolation)?
-                    .take();
+                self.expstart = None;
                 Err(GenCamError::ExposureNotStarted)
             }
             AsiExposureStatus::Success => {
@@ -820,7 +813,17 @@ impl AsiImager {
             Err(GenCamError::ExposureNotStarted)
         } else {
             let state = self.handle.state_raw()?;
-            Ok(state == AsiExposureStatus::Success)
+            if Instant::now() > self.deadline {
+                ASICALL!(ASIStopExposure(self.handle.handle())).map_err(|e| match e {
+                    AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+                    AsiError::InvalidId(_, _) => GenCamError::InvalidId(self.handle.handle()),
+                    _ => GenCamError::GeneralError(format!("{:?}", e)),
+                })?;
+                self.capturing.store(false, Ordering::SeqCst);
+                Err(GenCamError::TimedOut)
+            } else {
+                Ok(state == AsiExposureStatus::Success)
+            }
         }
     }
 
@@ -862,7 +865,6 @@ impl AsiImager {
             capturing: self.capturing.clone(),
             info: self.info.clone(),
             ctrl: self.device_ctrl.clone(),
-            start: self.start.clone(),
         }
     }
 
@@ -914,18 +916,7 @@ impl GenCamInfo for GenCamInfoAsi {
                 Ok(GenCamState::Errored(GenCamError::ExposureNotStarted))
             }
             // currently capturing
-            AsiExposureStatus::Working => {
-                if let Ok(start) = self.start.read() {
-                    start
-                        .map(|t| {
-                            let elapsed = t.elapsed();
-                            GenCamState::Exposing(Some(elapsed))
-                        })
-                        .ok_or(GenCamError::ExposureNotStarted)
-                } else {
-                    Err(GenCamError::AccessViolation)
-                }
-            }
+            AsiExposureStatus::Working => Ok(GenCamState::Exposing(None)),
             // exposure finished
             AsiExposureStatus::Success => Ok(GenCamState::ExposureFinished),
             // exposure failed

@@ -1,0 +1,37 @@
+[package]
+name = "generic-camera-asi"
+version = "0.0.5"
+edition = "2021"
+rust-version = "1.68.0"
+authors = ["Sunip K. Mukherjee"]
+license = "MIT OR Apache-2.0"
+readme = "README.MD"
+repository = "https://github.com/sunipkm/generic-camera-asi"
+homepage = "https://crates.io/crates/generic-camera-asi"
+keywords = ["generic-camera", "interface", "api", "zwo", "asi"]
+build = "build.rs"
+description = """
+An efficient and ergonomic interface to capture images using cameras.
+"""
+exclude = [".github"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+generic-camera = { version = ">= 0.0.6", default-features = false }
+refimage = { version = ">= 0.11", default-features = false }
+log = "0.4"
+lazy_static = "1.5"
+bytemuck = "1.18"
+
+[features]
+default = []
+bayerswap = []
+
+[build-dependencies]
+bindgen = "0.70"
+cc = "1.1"
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

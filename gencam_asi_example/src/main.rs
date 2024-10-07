@@ -1,6 +1,7 @@
 use std::{
     env,
     io::{self, Write},
+    net::TcpListener,
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -12,12 +13,15 @@ use std::{
 
 use chrono::{DateTime, Local};
 use configparser::ini::Ini;
+use gencam_packet::{GenCamPacket, PacketType};
 use generic_camera_asi::{
     controls::DeviceCtrl, controls::ExposureCtrl, GenCamCtrl, GenCamDriver, GenCamDriverAsi,
-    PropertyValue,
+    GenCamError, PropertyValue,
 };
 use refimage::{
-    CalcOptExp, ColorSpace, Debayer, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage, GenericImageOwned, ImageProps, OptimumExposureBuilder, ToLuma
+    CalcOptExp, ColorSpace, Debayer, DemosaicMethod, DynamicImage, DynamicImageOwned,
+    FitsCompression, FitsWrite, GenericImage, GenericImageOwned, ImageProps,
+    OptimumExposureBuilder, ToLuma,
 };
 
 use image::imageops::FilterType;
@@ -34,6 +38,8 @@ struct ASICamconfig {
     target_uncertainty: f32,
     gain: i32,
     target_temp: f32,
+    save_fits: bool,
+    save_png: bool,
 }
 
 fn get_out_dir() -> PathBuf {
@@ -41,6 +47,12 @@ fn get_out_dir() -> PathBuf {
 }
 
 fn main() {
+    // Set up websocket listening.
+    let bind_addr = "127.0.0.1:9001";
+    let server = TcpListener::bind(bind_addr).unwrap();
+    let mut websockets = Vec::with_capacity(10);
+    eprintln!("Listening on: ws://{bind_addr}");
+
     let cfg = ASICamconfig::from_ini(&get_out_dir().join("asicam.ini")).unwrap_or_else(|_| {
         println!(
             "Error reading config file {:#?}, using defaults",
@@ -50,6 +62,8 @@ fn main() {
         cfg.to_ini(&get_out_dir().join("asicam.ini")).unwrap();
         cfg
     });
+    let mut logfile = std::fs::File::open(&get_out_dir().join("asicam.log"))
+        .unwrap_or_else(|_| std::fs::File::create(&get_out_dir().join("asicam.log")).unwrap());
     let mut drv = GenCamDriverAsi;
     let num_cameras = drv.available_devices();
     println!("Found {} cameras", num_cameras);
@@ -159,8 +173,31 @@ fn main() {
         // );
         let exp_start = Local::now();
         let estart = Instant::now();
-        let Ok(img) = cam.capture() else {
-            break;
+        let img = {
+            let img = cam.capture();
+            match img {
+                Ok(img) => img,
+                Err(e) => {
+                    if e == GenCamError::TimedOut {
+                        if logfile
+                            .write(
+                                format!(
+                                    "[{}] AERO: Timeout\n",
+                                    exp_start.format("%Y-%m-%d %H:%M:%S")
+                                )
+                                .as_bytes(),
+                            )
+                            .is_err()
+                        {
+                            println!("Could not write to log file");
+                        }
+                        println!("\n[{}] AERO: Timeout", exp_start.format("%H:%M:%S"));
+                        continue;
+                    } else {
+                        panic!("Error capturing image: {:?}", e);
+                    }
+                }
+            }
         };
         let mut img: GenericImage = img.into();
         let save = if last_saved.is_none() {
@@ -176,15 +213,29 @@ fn main() {
                 let dir_prefix =
                     Path::new(&cfg.savedir).join(exp_start.format("%Y%m%d").to_string());
                 if !dir_prefix.exists() {
-                    std::fs::create_dir_all(&dir_prefix).unwrap_or_else(|e| panic!("Creating directory {:#?}: Error {e:?}", dir_prefix));
+                    std::fs::create_dir_all(&dir_prefix).unwrap_or_else(|e| {
+                        panic!("Creating directory {:#?}: Error {e:?}", dir_prefix)
+                    });
                 }
-                
-                println!(
-                    "\n[{}] AERO: Saved image, exposure {:.3} s",
-                    exp_start.format("%H:%M:%S"),
-                    exp.as_secs_f32()
-                );
-            
+                if cfg.save_fits {
+                    let fitsfile = dir_prefix.join(exp_start.format("%H%M%S%.3f.fits").to_string());
+                    if img
+                        .write_fits(&fitsfile, FitsCompression::Rice, true)
+                        .is_err()
+                    {
+                        println!(
+                            "\n[{}] AERO: Failed to save FITS image, exposure {:.3} s",
+                            exp_start.format("%H:%M:%S"),
+                            exp.as_secs_f32()
+                        );
+                    } else {
+                        println!(
+                            "\n[{}] AERO: Saved FITS image, exposure {:.3} s",
+                            exp_start.format("%H:%M:%S"),
+                            exp.as_secs_f32()
+                        );
+                    }
+                }
             }
             // debayer the image if it is a Bayer image
             if let ColorSpace::Bayer(_) = img.color_space() {
@@ -194,15 +245,44 @@ fn main() {
                     .expect("Error debayering image")
                     .into();
             }
+
+            // Connect to all incoming clients.
+            for stream in server.incoming() {
+                let websocket = tungstenite::accept(stream.unwrap()).unwrap();
+                websockets.push(websocket);
+                eprintln!("New client connected!");
+            }
+            let dimg = DynamicImage::try_from(img.clone()).expect("Error converting image");
+            let dimg = dimg.resize(1024, 1024, FilterType::Nearest);
+
+            // Transmit the debayered image to all connected client if transmitting.
+            {
+                let dimg = dimg.clone();
+                let img = DynamicImageOwned::try_from(dimg).expect("Could not convert image.");
+                for websocket in &mut websockets {
+                    // Converts the DynamicImage to DynamicImageOwned.
+                    // Create a new GenCamPacket with the image data.
+                    let pkt = GenCamPacket::new(
+                        PacketType::Image,
+                        0,
+                        1024,
+                        1024,
+                        Some(img.as_raw_u8().to_vec()),
+                    );
+                    // Set msg to the serialized pkt.
+                    let msg = serde_json::to_vec(&pkt).unwrap();
+                    // Send the message.
+                    websocket.send(msg.into()).unwrap();
+                }
+            }
+
             // save the debayerd image as PNG if saving
-            if save {
+            if save && cfg.save_png {
                 let dir_prefix =
                     Path::new(&cfg.savedir).join(exp_start.format("%Y%m%d").to_string());
                 if !dir_prefix.exists() {
                     std::fs::create_dir_all(&dir_prefix).unwrap();
                 }
-                let dimg = DynamicImage::try_from(img.clone()).expect("Error converting image");
-                let dimg = dimg.resize(1024, 1024, FilterType::Nearest);
                 dimg.save(dir_prefix.join(exp_start.format("%H%M%S%.3f.png").to_string()))
                     .expect("Error saving image");
             }
@@ -249,6 +329,8 @@ impl Default for ASICamconfig {
             target_uncertainty: 2000.0 / 65536.0,
             gain: 100,
             target_temp: -10.0,
+            save_fits: false,
+            save_png: true,
         }
     }
 }
@@ -328,6 +410,24 @@ impl ASICamconfig {
                 .parse::<f32>()
                 .unwrap();
         }
+        if config["config"].contains_key("save_fits") {
+            cfg.save_fits = config["config"]["save_fits"]
+                .clone()
+                .unwrap()
+                .parse::<bool>()
+                .unwrap();
+        } else {
+            cfg.save_fits = false;
+        }
+        if config["config"].contains_key("save_png") {
+            cfg.save_png = config["config"]["save_png"]
+                .clone()
+                .unwrap()
+                .parse::<bool>()
+                .unwrap();
+        } else {
+            cfg.save_png = false;
+        }
         Ok(cfg)
     }
 
@@ -364,6 +464,8 @@ impl ASICamconfig {
             "max_exposure",
             Some(self.max_exposure.as_secs().to_string()),
         );
+        config.set("config", "save_fits", Some(self.save_fits.to_string()));
+        config.set("config", "save_png", Some(self.save_png.to_string()));
         config.write(path).map_err(|err| err.to_string())?;
         Ok(())
     }
