@@ -1,8 +1,14 @@
 use std::{
-    env, fs::OpenOptions, io::{self, Write}, path::{Path, PathBuf}, sync::{
+    env,
+    fs::OpenOptions,
+    io::{self, Write},
+    path::{Path, PathBuf},
+    sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    }, thread::{self, sleep}, time::{Duration, Instant, SystemTime}
+    },
+    thread::{self, sleep},
+    time::{Duration, Instant, SystemTime},
 };
 
 use chrono::{DateTime, Local};
@@ -166,8 +172,8 @@ fn main() {
             let img = cam.capture();
             match img {
                 Ok(img) => img,
-                Err(e) => {
-                    if e == GenCamError::TimedOut {
+                Err(e) => match e {
+                    GenCamError::TimedOut => {
                         if logfile
                             .write(
                                 format!(
@@ -182,10 +188,15 @@ fn main() {
                         }
                         println!("\n[{}] AERO: Timeout", exp_start.format("%H:%M:%S"));
                         continue;
-                    } else {
+                    }
+                    GenCamError::ExposureNotStarted => {
+                        // probably ctrl + c was pressed
+                        continue;
+                    }
+                    _ => {
                         panic!("Error capturing image: {:?}", e);
                     }
-                }
+                },
             }
         };
         let mut img: GenericImage = img.into();
@@ -250,12 +261,10 @@ fn main() {
             // calculate the optimal exposure
             let (opt_exp, _) = if img.color_space() != ColorSpace::Gray {
                 let dimg = img.to_luma().expect("Could not calculate luminance value.");
-                dimg
-                    .calc_opt_exp(&exp_ctrl, exp, 1)
+                dimg.calc_opt_exp(&exp_ctrl, exp, 1)
                     .expect("Could not calculate optimal exposure")
             } else {
-                img
-                    .calc_opt_exp(&exp_ctrl, exp, 1)
+                img.calc_opt_exp(&exp_ctrl, exp, 1)
                     .expect("Could not calculate optimal exposure")
             };
             if opt_exp != exp {
