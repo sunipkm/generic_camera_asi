@@ -412,12 +412,17 @@ impl AsiImager {
             }
         })?;
         let state = self.handle.state_raw()?;
-        if state != AsiExposureStatus::Working {
-            self.capturing.store(false, Ordering::SeqCst);
-            return Err(GenCamError::GeneralError(format!(
-                "Unexpected exposure status: {:?}",
-                state
-            )));
+        match state {
+            AsiExposureStatus::Idle => {
+                self.capturing.store(false, Ordering::SeqCst);
+                return Err(GenCamError::ExposureNotStarted);
+            }
+            AsiExposureStatus::Failed => {
+                self.capturing.store(false, Ordering::SeqCst);
+                return Err(GenCamError::ExposureFailed("".into()));
+            }
+            // these are the okay values
+            AsiExposureStatus::Working | AsiExposureStatus::Success => {},
         }
         let Ok(mut lexp) = self.last_exposure.try_borrow_mut() else {
             return Err(GenCamError::AccessViolation);
@@ -813,16 +818,25 @@ impl AsiImager {
             Err(GenCamError::ExposureNotStarted)
         } else {
             let state = self.handle.state_raw()?;
-            if Instant::now() > self.deadline {
-                ASICALL!(ASIStopExposure(self.handle.handle())).map_err(|e| match e {
-                    AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
-                    AsiError::InvalidId(_, _) => GenCamError::InvalidId(self.handle.handle()),
-                    _ => GenCamError::GeneralError(format!("{:?}", e)),
-                })?;
-                self.capturing.store(false, Ordering::SeqCst);
-                Err(GenCamError::TimedOut)
-            } else {
-                Ok(state == AsiExposureStatus::Success)
+            match state {
+                AsiExposureStatus::Idle => {
+                    self.capturing.store(false, Ordering::SeqCst);
+                    Err(GenCamError::ExposureNotStarted)
+                }
+                AsiExposureStatus::Working => {
+                    let now = Instant::now();
+                    if now > self.deadline {
+                        self.capturing.store(false, Ordering::SeqCst);
+                        Err(GenCamError::TimedOut)
+                    } else {
+                        Ok(false)
+                    }
+                },
+                AsiExposureStatus::Success => Ok(true),
+                AsiExposureStatus::Failed => {
+                    self.capturing.store(false, Ordering::SeqCst);
+                    Err(GenCamError::ExposureFailed("".into()))
+                }
             }
         }
     }

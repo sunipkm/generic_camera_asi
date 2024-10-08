@@ -1,13 +1,8 @@
 use std::{
-    env,
-    io::{self, Write},
-    path::{Path, PathBuf},
-    sync::{
+    env, fs::OpenOptions, io::{self, Write}, path::{Path, PathBuf}, sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
-    },
-    thread::{self, sleep},
-    time::{Duration, Instant, SystemTime},
+    }, thread::{self, sleep}, time::{Duration, Instant, SystemTime}
 };
 
 use chrono::{DateTime, Local};
@@ -53,8 +48,11 @@ fn main() {
         cfg.to_ini(&get_out_dir().join("asicam.ini")).unwrap();
         cfg
     });
-    let mut logfile = std::fs::File::open(&get_out_dir().join("asicam.log"))
-        .unwrap_or_else(|_| std::fs::File::create(&get_out_dir().join("asicam.log")).unwrap());
+    let mut logfile = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&get_out_dir().join("asicam.log"))
+        .expect("Error opening log file");
     let mut drv = GenCamDriverAsi;
     let num_cameras = drv.available_devices();
     println!("Found {} cameras", num_cameras);
