@@ -35,7 +35,9 @@ fn main() {
                 "LD_LIBRARY_PATH is not set. Please set it to the directory containing ASICamera2: LD_LIBRARY_PATH=/path/to/ASICamera2:$LD_LIBRARY_PATH"
             );
         }
+        println!("cargo:rustc-link-lib=ASICamera2");
     }
+    #[cfg(target_os = "macos")]
     println!("cargo:rustc-link-lib=static=ASICamera2");
     println!("cargo:rustc-link-lib=pthread");
     println!("cargo:rustc-link-lib=m");

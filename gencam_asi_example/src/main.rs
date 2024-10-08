@@ -51,7 +51,7 @@ fn main() {
     let mut logfile = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(&get_out_dir().join("asicam.log"))
+        .open(get_out_dir().join("asicam.log"))
         .expect("Error opening log file");
     let mut drv = GenCamDriverAsi;
     let num_cameras = drv.available_devices();
@@ -248,10 +248,16 @@ fn main() {
                     .expect("Error saving image");
             }
             // calculate the optimal exposure
-            let dimg = img.to_luma().expect("Could not calculate luminance value");
-            let (opt_exp, _) = dimg
-                .calc_opt_exp(&exp_ctrl, exp, 1)
-                .expect("Could not calculate optimal exposure");
+            let (opt_exp, _) = if img.color_space() != ColorSpace::Gray {
+                let dimg = img.to_luma().expect("Could not calculate luminance value.");
+                dimg
+                    .calc_opt_exp(&exp_ctrl, exp, 1)
+                    .expect("Could not calculate optimal exposure")
+            } else {
+                img
+                    .calc_opt_exp(&exp_ctrl, exp, 1)
+                    .expect("Could not calculate optimal exposure")
+            };
             if opt_exp != exp {
                 println!(
                     "\n[{}] AERO: Exposure changed from {:.3} s to {:.3} s",
