@@ -18,8 +18,8 @@ use generic_camera_asi::{
     GenCamError, PropertyValue,
 };
 use refimage::{
-    CalcOptExp, ColorSpace, Debayer, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite,
-    GenericImage, GenericImageOwned, ImageProps, OptimumExposureBuilder, ToLuma,
+    CalcOptExp, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage,
+    OptimumExposureBuilder, ToLuma,
 };
 
 use image::imageops::FilterType;
@@ -199,7 +199,7 @@ fn main() {
                 },
             }
         };
-        let mut img: GenericImage = img.into();
+        let img: GenericImage = img.into();
         let save = if last_saved.is_none() {
             true
         } else {
@@ -238,13 +238,9 @@ fn main() {
                 }
             }
             // debayer the image if it is a Bayer image
-            if let ColorSpace::Bayer(_) = img.color_space() {
-                let dimg: GenericImageOwned = img.clone().into();
-                img = dimg
-                    .debayer(DemosaicMethod::Nearest)
-                    .expect("Error debayering image")
-                    .into();
-            }
+            let mut img = img
+                .debayer(DemosaicMethod::Nearest)
+                .expect("Error debayering image");
             // save the debayerd image as PNG if saving
             if save && cfg.save_png {
                 let dir_prefix =
@@ -258,15 +254,12 @@ fn main() {
                 dimg.save(dir_prefix.join(exp_start.format("%H%M%S%.3f.png").to_string()))
                     .expect("Error saving image");
             }
+            // convert the image to grayscale
+            img.to_luma().expect("Error converting image to grayscale");
             // calculate the optimal exposure
-            let (opt_exp, _) = if img.color_space() != ColorSpace::Gray {
-                let dimg = img.to_luma().expect("Could not calculate luminance value.");
-                dimg.calc_opt_exp(&exp_ctrl, exp, 1)
-                    .expect("Could not calculate optimal exposure")
-            } else {
-                img.calc_opt_exp(&exp_ctrl, exp, 1)
-                    .expect("Could not calculate optimal exposure")
-            };
+            let (opt_exp, _) = img
+                .calc_opt_exp(&exp_ctrl, exp, 1)
+                .expect("Could not calculate optimal exposure");
             if opt_exp != exp {
                 println!(
                     "\n[{}] AERO: Exposure changed from {:.3} s to {:.3} s",

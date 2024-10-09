@@ -4,7 +4,7 @@
 to capture frames from CCD/CMOS based detectors from [ZWO](https://www.zwoastro.com/). This crate provides
 wrappers for the [ASI Camera SDK](https://www.zwoastro.com/downloads/developers) C library to access the
 cameras for image capture and other housekeeping functions in a safe way. Images are obtained as 
-[`refimage::GenericImage`](https://docs.rs/refimage/latest/refimage/struct.GenericImage.html) with extensive metadata.
+[`refimage::GenericImageRef`](https://docs.rs/refimage/latest/refimage/struct.GenericImage.html) with extensive metadata.
 
 As is, this Rust driver is intended for use on Linux and macOS platforms.
 
