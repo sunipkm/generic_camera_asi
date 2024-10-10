@@ -18,8 +18,7 @@ use generic_camera_asi::{
     GenCamError, PropertyValue,
 };
 use refimage::{
-    CalcOptExp, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage,
-    OptimumExposureBuilder, ToLuma,
+    CalcOptExp, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage, ImageProps, OptimumExposureBuilder, ToLuma
 };
 
 use image::imageops::FilterType;
@@ -238,7 +237,13 @@ fn main() {
                 }
             }
             // debayer the image if it is a Bayer image
-            let mut img = img
+            let mut img = if img.color_space().is_bayer() {
+                img.debayer(DemosaicMethod::Nearest)
+                    .expect("Error debayering image")
+            } else {
+                img
+            };
+            img
                 .debayer(DemosaicMethod::Nearest)
                 .expect("Error debayering image");
             // save the debayerd image as PNG if saving
