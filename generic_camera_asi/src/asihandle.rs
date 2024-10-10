@@ -422,7 +422,7 @@ impl AsiImager {
                 return Err(GenCamError::ExposureFailed("".into()));
             }
             // these are the okay values
-            AsiExposureStatus::Working | AsiExposureStatus::Success => {},
+            AsiExposureStatus::Working | AsiExposureStatus::Success => {}
         }
         let Ok(mut lexp) = self.last_exposure.try_borrow_mut() else {
             return Err(GenCamError::AccessViolation);
@@ -480,7 +480,7 @@ impl AsiImager {
                     return Err(GenCamError::ExposureNotStarted);
                 };
                 let mut ptr = self.imgstor.as_mut_ptr();
-                let len = self.imgstor.len();
+                let len = self.imgstor.len() * size_of::<u16>();
                 ASICALL!(ASIGetDataAfterExp(handle, ptr as _, len as _)).map_err(|e| {
                     self.capturing.store(false, Ordering::SeqCst);
                     match e {
@@ -662,11 +662,13 @@ impl AsiImager {
                     })?,
             }
         };
-        lims.validate(value)
-            .map_err(|e| GenCamError::PropertyError {
-                control: *prop,
-                error: e,
-            })?;
+        if prop != &GenCamCtrl::Sensor(SensorCtrl::PixelFormat) {
+            lims.validate(value)
+                .map_err(|e| GenCamError::PropertyError {
+                    control: *prop,
+                    error: e,
+                })?;
+        }
         let handle = self.handle.handle();
         // handle the sensor controls that don't need lock
         match ctrl {
@@ -831,7 +833,7 @@ impl AsiImager {
                     } else {
                         Ok(false)
                     }
-                },
+                }
                 AsiExposureStatus::Success => Ok(true),
                 AsiExposureStatus::Failed => {
                     self.capturing.store(false, Ordering::SeqCst);

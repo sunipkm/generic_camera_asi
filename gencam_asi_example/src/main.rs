@@ -14,11 +14,12 @@ use std::{
 use chrono::{DateTime, Local};
 use configparser::ini::Ini;
 use generic_camera_asi::{
-    controls::DeviceCtrl, controls::ExposureCtrl, GenCamCtrl, GenCamDriver, GenCamDriverAsi,
-    GenCamError, PropertyValue,
+    controls::{DeviceCtrl, ExposureCtrl, SensorCtrl},
+    GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, PropertyValue,
 };
 use refimage::{
-    CalcOptExp, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage, ImageProps, OptimumExposureBuilder, ToLuma
+    CalcOptExp, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage, ImageProps,
+    OptimumExposureBuilder, ToLuma,
 };
 
 use image::imageops::FilterType;
@@ -74,6 +75,20 @@ fn main() {
         .expect("Error connecting to camera");
     let info = cam.info().expect("Error getting camera info");
     println!("{:?}", info);
+
+    if let Some(color) = info.info.get("Color Sensor") {
+        if let Some(color) = color.as_bool() {
+            if !color {
+                println!("Setting pixel format to 16-bit");
+                cam.set_property(
+                    SensorCtrl::PixelFormat.into(),
+                    &GenCamPixelBpp::Bpp16.into(),
+                    false,
+                )
+                .expect("Error setting pixel format");
+            }
+        }
+    }
 
     println!("Setting target temperature: {} C", cfg.target_temp);
     if cam
