@@ -243,9 +243,6 @@ fn main() {
             } else {
                 img
             };
-            img
-                .debayer(DemosaicMethod::Nearest)
-                .expect("Error debayering image");
             // save the debayerd image as PNG if saving
             if save && cfg.save_png {
                 let dir_prefix =
