@@ -10,5 +10,10 @@ ctrlc = "3.4.5"
 generic-camera-asi = { path = "../generic_camera_asi" }
 refimage = { version = ">= 0.10", features = ["default", "image", "fitsio"] }
 image = "0.25"
-rppal = "0.19"
+rppal = { version = "0.19", optional = true }
+
+[features]
+default = []
+full = ["rppal"]
+
 

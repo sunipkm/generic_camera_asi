@@ -23,12 +23,15 @@ use refimage::{
 };
 
 use image::imageops::FilterType;
+#[cfg(feature = "rppal")]
 use rppal::gpio::Gpio;
 
+#[cfg(feature = "rppal")]
 const GPIO_PWR: u8 = 26;
 
 #[derive(Debug)]
 struct ASICamconfig {
+    camera: Option<String>,
     progname: String,
     savedir: String,
     cadence: Duration,
@@ -48,12 +51,16 @@ fn get_out_dir() -> PathBuf {
 }
 
 fn main() {
-    let mut power_pin = Gpio::new()
-        .expect("Error opening GPIO")
-        .get(GPIO_PWR)
-        .expect(&format!("Could not open pin {GPIO_PWR}"))
-        .into_output();
-    power_pin.set_high(); // turn on power
+    #[cfg(feature = "rppal")]
+    let mut power_pin = {
+        let mut p = Gpio::new()
+            .expect("Error opening GPIO")
+            .get(GPIO_PWR)
+            .expect(&format!("Could not open pin {GPIO_PWR}"))
+            .into_output();
+        p.set_high(); // turn on power
+        p
+    };
     let main_run = Arc::new(AtomicBool::new(true));
     // ctrl + c handler to stop the main loop
     {
@@ -90,9 +97,19 @@ fn main() {
 
         let sub_run = Arc::new(AtomicBool::new(true));
 
-        let mut cam = drv
-            .connect_first_device()
-            .expect("Error connecting to camera");
+        let mut cam = {
+            if let Some(cam_name) = &cfg.camera {
+                let devlist = drv.list_devices().expect("Could not list devices");
+                let dev = devlist
+                    .iter()
+                    .find(|d| d.name.contains(cam_name))
+                    .expect("Could not find camera");
+                drv.connect_device(dev).expect("Error connecting to camera")
+            } else {
+                drv.connect_first_device()
+                    .expect("Error connecting to camera")
+            }
+        };
         let info = cam.info().expect("Error getting camera info");
         println!("{:?}", info);
 
@@ -218,10 +235,13 @@ fn main() {
                         GenCamError::ExposureFailed(reason) => {
                             println!("Error capturing image: {}, re-enumerating...", reason);
                             sub_run.store(false, Ordering::SeqCst); // indicate to stop the housekeeping thread
-                            power_pin.set_low(); // turn off power
-                            sleep(Duration::from_secs(5));
-                            power_pin.set_high(); // turn on power
-                            sleep(Duration::from_secs(5));
+                            #[cfg(feature = "rppal")]
+                            {
+                                power_pin.set_low(); // turn off power
+                                sleep(Duration::from_secs(5));
+                                power_pin.set_high(); // turn on power
+                                sleep(Duration::from_secs(5));
+                            }
                             break 'exposure_loop; // re-initialize the camera
                         }
                         _ => {
@@ -324,6 +344,7 @@ fn main() {
 impl Default for ASICamconfig {
     fn default() -> Self {
         Self {
+            camera: None, // connect to the first camera
             progname: "ASICam".to_string(),
             savedir: "./data".to_string(),
             cadence: Duration::from_secs(10),
@@ -432,6 +453,9 @@ impl ASICamconfig {
                 .unwrap();
         } else {
             cfg.save_png = false;
+        }
+        if config["config"].contains_key("camera") {
+            cfg.camera = Some(config["config"]["camera"].clone().unwrap());
         }
         Ok(cfg)
     }
