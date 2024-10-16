@@ -309,7 +309,7 @@ pub(crate) fn map_control_cap(
             ),
         )),
         AutoExpMaxGain => Some((
-            AnalogCtrl::Gain.into(),
+            ExposureCtrl::AutoMaxGain.into(),
             (
                 AutoExpMaxGain,
                 Property::new(

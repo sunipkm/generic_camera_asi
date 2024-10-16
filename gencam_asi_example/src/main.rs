@@ -14,7 +14,7 @@ use std::{
 use chrono::{DateTime, Local};
 use configparser::ini::Ini;
 use generic_camera_asi::{
-    controls::{DeviceCtrl, ExposureCtrl, SensorCtrl},
+    controls::{AnalogCtrl, DeviceCtrl, ExposureCtrl, SensorCtrl},
     GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, PropertyValue,
 };
 use refimage::{
@@ -181,6 +181,11 @@ fn main() {
             false,
         )
         .expect("Error setting exposure time");
+
+        if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &100i64.into(), false) {
+            println!("Error setting camera gain: {e:#?}");
+        }
+
         let props = cam.list_properties();
         let exp_prop = props
             .get(&GenCamCtrl::Exposure(ExposureCtrl::ExposureTime))

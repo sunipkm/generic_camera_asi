@@ -662,12 +662,16 @@ impl AsiImager {
                     })?,
             }
         };
-        if prop != &GenCamCtrl::Sensor(SensorCtrl::PixelFormat) {
-            lims.validate(value)
+        match prop {
+            GenCamCtrl::Sensor(SensorCtrl::PixelFormat) => {}
+            GenCamCtrl::Sensor(SensorCtrl::ReverseX) | GenCamCtrl::Sensor(SensorCtrl::ReverseY) => {},
+            _ => {
+                lims.validate(value)
                 .map_err(|e| GenCamError::PropertyError {
                     control: *prop,
                     error: e,
                 })?;
+            }
         }
         let handle = self.handle.handle();
         // handle the sensor controls that don't need lock
