@@ -548,7 +548,13 @@ impl AsiImager {
                 "Frame type",
             ),
         );
-        img.insert_key("GAIN", (expinfo.gain.unwrap_or(0), "Gain"));
+        img.insert_key(
+            "GAIN",
+            (
+                expinfo.gain.map(|v| v as f64 * 0.1).unwrap_or(0.0),
+                "Gain (dB)",
+            ),
+        );
         img.insert_key("XOFFSET", (roi.x_min, "X offset"));
         img.insert_key("YOFFSET", (roi.y_min, "Y offset"));
         img.insert_key("XBINNING", (1, "X binning"));
@@ -587,7 +593,6 @@ impl AsiImager {
             });
         };
         match prop {
-            GenCamCtrl::Device(_) => self.device_ctrl.get_value(&self.handle, prop),
             GenCamCtrl::Exposure(ExposureCtrl::ExposureTime) => {
                 let (exp, auto) = self.get_exposure()?;
                 Ok((PropertyValue::from(exp), auto))
@@ -614,10 +619,11 @@ impl AsiImager {
                     })
                 }
             }
-            _ => Err(GenCamError::PropertyError {
-                control: *prop,
-                error: PropertyError::NotFound,
-            }),
+            GenCamCtrl::Analog(AnalogCtrl::Gain) => {
+                let val = self.get_gain()?;
+                Ok((PropertyValue::from(val as f64 * 0.1), false))
+            }
+            _ => self.device_ctrl.get_value(&self.handle, prop),
         }
     }
 
@@ -664,13 +670,14 @@ impl AsiImager {
         };
         match prop {
             GenCamCtrl::Sensor(SensorCtrl::PixelFormat) => {}
-            GenCamCtrl::Sensor(SensorCtrl::ReverseX) | GenCamCtrl::Sensor(SensorCtrl::ReverseY) => {},
+            GenCamCtrl::Sensor(SensorCtrl::ReverseX) | GenCamCtrl::Sensor(SensorCtrl::ReverseY) => {
+            }
             _ => {
                 lims.validate(value)
-                .map_err(|e| GenCamError::PropertyError {
-                    control: *prop,
-                    error: e,
-                })?;
+                    .map_err(|e| GenCamError::PropertyError {
+                        control: *prop,
+                        error: e,
+                    })?;
             }
         }
         let handle = self.handle.handle();
@@ -722,7 +729,15 @@ impl AsiImager {
                     })
                 }
             }
-            GenCamCtrl::Analog(AnalogCtrl::Gain | AnalogCtrl::Gamma) => {
+            GenCamCtrl::Analog(AnalogCtrl::Gain) => {
+                let val: f64 = value.try_into().map_err(|e| GenCamError::PropertyError {
+                    control: *prop,
+                    error: e,
+                })?;
+                let val = (val * 10.0) as i64;
+                self.set_gain(val)
+            }
+            GenCamCtrl::Analog(AnalogCtrl::Gamma) => {
                 let val = value.try_into().map_err(|e| GenCamError::PropertyError {
                     control: *prop,
                     error: e,

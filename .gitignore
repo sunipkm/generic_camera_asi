@@ -1,5 +1,6 @@
 **/target
 /Cargo.lock
+generic_camera_asi/Cargo.lock
 **/*.fit*
 **/*.png
 **/*.DS_Store

@@ -1,5 +1,10 @@
 [workspace]
+resolver = "2"
 members = ["generic_camera_asi", "gencam_asi_example"]
+
+[workspace.dependencies]
+refimage = { path = "../refimage", default-features = false}
+generic-camera = { path = "../generic_camera", default-features = false}
 
 [patch.crates-io]
 generic-camera-asi = { path = "generic_camera_asi" }

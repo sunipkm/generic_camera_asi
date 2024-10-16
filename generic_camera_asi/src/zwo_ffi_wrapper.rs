@@ -233,11 +233,11 @@ pub(crate) fn map_control_cap(
             (
                 Gain,
                 Property::new(
-                    PropertyLims::Int {
-                        min: obj.MinValue as _,
-                        max: obj.MaxValue as _,
-                        step: 1,
-                        default: obj.DefaultValue as _,
+                    PropertyLims::Float {
+                        min: obj.MinValue as f64 * 0.1,
+                        max: obj.MaxValue as f64 * 0.1,
+                        step: 0.1,
+                        default: obj.DefaultValue as f64 * 0.1,
                     },
                     obj.IsAutoSupported == ASI_BOOL_ASI_TRUE as _,
                     obj.IsWritable != ASI_BOOL_ASI_TRUE as _,

@@ -17,11 +17,13 @@ use generic_camera_asi::{
     controls::{AnalogCtrl, DeviceCtrl, ExposureCtrl, SensorCtrl},
     GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, PropertyValue,
 };
+#[allow(unused_imports)]
 use refimage::{
     CalcOptExp, DemosaicMethod, DynamicImage, FitsCompression, FitsWrite, GenericImage, ImageProps,
     OptimumExposureBuilder, ToLuma,
 };
 
+#[cfg(feature = "image")]
 use image::imageops::FilterType;
 #[cfg(feature = "rppal")]
 use rppal::gpio::Gpio;
@@ -112,7 +114,7 @@ fn main() {
                     .expect("Error connecting to camera")
             }
         };
-        let info = cam.info().expect("Error getting camera info");
+        let info = cam.info().expect("Error getting camera info").clone();
         println!("{:?}", info);
 
         if let Some(color) = info.info.get("Color Sensor") {
@@ -170,7 +172,9 @@ fn main() {
                     io::stdout().flush().unwrap();
                     print!("\r");
                 }
-                caminfo.cancel_capture().expect("Error cancelling capture");
+                if let Err(e) = caminfo.cancel_capture() {
+                    println!("Error cancelling capture: {:#?}", e);
+                }
                 println!("\nExiting housekeeping thread");
             })
         };
@@ -181,9 +185,38 @@ fn main() {
             false,
         )
         .expect("Error setting exposure time");
-
-        if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &100i64.into(), false) {
-            println!("Error setting camera gain: {e:#?}");
+        // gain settings
+        cam.list_properties()
+            .get(&AnalogCtrl::Gain.into())
+            .map(|prop| {
+                println!("Gain Settings: {:#?}", prop);
+            });
+        if let Ok((gain, auto)) = cam.get_property(AnalogCtrl::Gain.into()) {
+            println!(
+                "Current gain: {:.1} dB, Auto mode: {}",
+                gain.as_f64().unwrap_or(-1.0),
+                auto
+            );
+        }
+        // set optimal gain for the cameras we use
+        if info.name.contains("533") {
+            if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &10.0f64.into(), false) {
+                println!("Error setting camera gain: {e:#?}");
+            } else {
+                println!("Setting camera gain to 10 dB");
+            }
+        } else if info.name.contains("432") {
+            if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &14.0f64.into(), false) {
+                println!("Error setting camera gain: {e:#?}");
+            } else {
+                println!("Setting camera gain to 14 dB");
+            }
+        } else if info.name.contains("585") {
+            if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &25.2f64.into(), false) {
+                println!("Error setting camera gain: {e:#?}");
+            } else {
+                println!("Setting camera gain to 25.2 dB");
+            }
         }
 
         let props = cam.list_properties();
@@ -304,6 +337,7 @@ fn main() {
                 } else {
                     img
                 };
+                #[cfg(feature = "image")]
                 // save the debayerd image as PNG if saving
                 if save && cfg.save_png {
                     let dir_prefix =
