@@ -53,6 +53,7 @@ fn get_out_dir() -> PathBuf {
 fn main() {
     #[cfg(feature = "rppal")]
     let mut power_pin = {
+        println!("Initializing GPIO");
         let mut p = Gpio::new()
             .expect("Error opening GPIO")
             .get(GPIO_PWR)
@@ -99,6 +100,7 @@ fn main() {
 
         let mut cam = {
             if let Some(cam_name) = &cfg.camera {
+                println!("Connecting to camera: {}", cam_name);
                 let devlist = drv.list_devices().expect("Could not list devices");
                 let dev = devlist
                     .iter()
@@ -168,6 +170,7 @@ fn main() {
                     io::stdout().flush().unwrap();
                     print!("\r");
                 }
+                caminfo.cancel_capture().expect("Error cancelling capture");
                 println!("\nExiting housekeeping thread");
             })
         };
