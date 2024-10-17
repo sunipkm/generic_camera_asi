@@ -1,6 +1,6 @@
 [package]
 name = "gencam_asi_example"
-version = "0.0.2"
+version = "0.0.3-pre0"
 edition = "2021"
 
 [dependencies]

@@ -42,7 +42,7 @@ struct ASICamconfig {
     max_bin: i32,
     target_val: f32,
     target_uncertainty: f32,
-    gain: i32,
+    gain: Option<f64>,
     target_temp: f32,
     save_fits: bool,
     save_png: bool,
@@ -198,24 +198,30 @@ fn main() {
                 auto
             );
         }
-        // set optimal gain for the cameras we use
-        if info.name.contains("533") {
-            if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &10.0f64.into(), false) {
-                println!("Error setting camera gain: {e:#?}");
-            } else {
-                println!("Setting camera gain to 10 dB");
-            }
-        } else if info.name.contains("432") {
-            if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &14.0f64.into(), false) {
-                println!("Error setting camera gain: {e:#?}");
-            } else {
-                println!("Setting camera gain to 14 dB");
-            }
-        } else if info.name.contains("585") {
-            if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &25.2f64.into(), false) {
-                println!("Error setting camera gain: {e:#?}");
-            } else {
-                println!("Setting camera gain to 25.2 dB");
+        if let Some(gain) = cfg.gain {
+            println!("Setting gain to {:.1} dB", gain);
+            cam.set_property(AnalogCtrl::Gain.into(), &gain.into(), false)
+                .expect("Error setting gain");
+        } else {
+            // set optimal gain for the cameras we use
+            if info.name.contains("533") {
+                if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &10.0f64.into(), false) {
+                    println!("Error setting camera gain: {e:#?}");
+                } else {
+                    println!("Setting {} gain to 10 dB", &info.name);
+                }
+            } else if info.name.contains("432") {
+                if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &14.0f64.into(), false) {
+                    println!("Error setting camera gain: {e:#?}");
+                } else {
+                    println!("Setting {} gain to 14 dB", &info.name);
+                }
+            } else if info.name.contains("585") {
+                if let Err(e) = cam.set_property(AnalogCtrl::Gain.into(), &25.2f64.into(), false) {
+                    println!("Error setting camera gain: {e:#?}");
+                } else {
+                    println!("Setting {} gain to 25.2 dB", &info.name);
+                }
             }
         }
 
@@ -247,7 +253,6 @@ fn main() {
             //     roi.width, roi.height, roi.x_min, roi.y_min
             // );
             let exp_start = Local::now();
-            let estart = Instant::now();
             let img = {
                 let img = cam.capture();
                 match img {
@@ -292,16 +297,17 @@ fn main() {
                 }
             };
             let img: GenericImage = img.into();
-            let save = if last_saved.is_none() {
-                true
-            } else {
-                let elapsed = estart.duration_since(last_saved.unwrap());
-                elapsed > cfg.cadence
+            let save = match last_saved {
+                None => true,
+                Some(last_saved) => {
+                    let elapsed = Instant::now().duration_since(last_saved);
+                    elapsed > cfg.cadence
+                }
             };
             if let Some(exp) = img.get_exposure() {
                 // save the raw FITS image
                 if save {
-                    last_saved = Some(estart);
+                    last_saved = Some(Instant::now());
                     let dir_prefix =
                         Path::new(&cfg.savedir).join(exp_start.format("%Y%m%d").to_string());
                     if !dir_prefix.exists() {
@@ -395,7 +401,7 @@ impl Default for ASICamconfig {
             max_bin: 4,
             target_val: 30000.0 / 65536.0,
             target_uncertainty: 2000.0 / 65536.0,
-            gain: 100,
+            gain: None, // use the camera default
             target_temp: -10.0,
             save_fits: false,
             save_png: true,
@@ -464,13 +470,11 @@ impl ASICamconfig {
                 .unwrap();
             cfg.target_uncertainty /= 65536.0;
         }
-        if config["config"].contains_key("gain") {
-            cfg.gain = config["config"]["gain"]
-                .clone()
-                .unwrap()
-                .parse::<i32>()
-                .unwrap();
-        }
+        if config["config"].contains_key("gain") {}
+        cfg.gain = config["config"]["gain"]
+            .as_ref()
+            .map(|v| v.parse::<f64>().ok())
+            .flatten();
         if config["config"].contains_key("target_temp") {
             cfg.target_temp = config["config"]["target_temp"]
                 .clone()
@@ -528,7 +532,9 @@ impl ASICamconfig {
             "uncertainty",
             Some((self.target_uncertainty * 65536.0).to_string()),
         );
-        config.set("config", "gain", Some(self.gain.to_string()));
+        if let Some(gain) = self.gain {
+            config.set("config", "gain", Some(gain.to_string()));
+        }
         config.set("config", "target_temp", Some(self.target_temp.to_string()));
         config.set(
             "config",
