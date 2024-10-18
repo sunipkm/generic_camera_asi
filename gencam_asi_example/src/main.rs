@@ -59,7 +59,7 @@ fn main() {
         let mut p = Gpio::new()
             .expect("Error opening GPIO")
             .get(GPIO_PWR)
-            .expect(&format!("Could not open pin {GPIO_PWR}"))
+            .unwrap_or_else(|_| panic!("Could not open pin {GPIO_PWR}"))
             .into_output();
         p.set_high(); // turn on power
         p
@@ -186,11 +186,9 @@ fn main() {
         )
         .expect("Error setting exposure time");
         // gain settings
-        cam.list_properties()
-            .get(&AnalogCtrl::Gain.into())
-            .map(|prop| {
-                println!("Gain Settings: {:#?}", prop);
-            });
+        if let Some(prop) = cam.list_properties().get(&AnalogCtrl::Gain.into()) {
+            println!("Gain Settings: {:#?}", prop);
+        }
         if let Ok((gain, auto)) = cam.get_property(AnalogCtrl::Gain.into()) {
             println!(
                 "Current gain: {:.1} dB, Auto mode: {}",
@@ -472,8 +470,8 @@ impl ASICamconfig {
         }
         if config["config"].contains_key("gain") {
             cfg.gain = config["config"]["gain"]
-            .as_ref()
-            .and_then(|v| v.parse::<f64>().ok());
+                .as_ref()
+                .and_then(|v| v.parse::<f64>().ok());
         }
         if config["config"].contains_key("target_temp") {
             cfg.target_temp = config["config"]["target_temp"]
