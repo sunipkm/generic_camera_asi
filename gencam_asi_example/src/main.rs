@@ -470,11 +470,11 @@ impl ASICamconfig {
                 .unwrap();
             cfg.target_uncertainty /= 65536.0;
         }
-        if config["config"].contains_key("gain") {}
-        cfg.gain = config["config"]["gain"]
+        if config["config"].contains_key("gain") {
+            cfg.gain = config["config"]["gain"]
             .as_ref()
-            .map(|v| v.parse::<f64>().ok())
-            .flatten();
+            .and_then(|v| v.parse::<f64>().ok());
+        }
         if config["config"].contains_key("target_temp") {
             cfg.target_temp = config["config"]["target_temp"]
                 .clone()
