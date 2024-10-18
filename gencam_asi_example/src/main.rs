@@ -432,11 +432,11 @@ impl ASICamconfig {
             );
         }
         if config["config"].contains_key("max_exposure") {
-            cfg.max_exposure = Duration::from_secs(
+            cfg.max_exposure = Duration::from_secs_f64(
                 config["config"]["max_exposure"]
                     .clone()
                     .unwrap()
-                    .parse::<u64>()
+                    .parse::<f64>()
                     .unwrap(),
             );
         }
@@ -518,7 +518,7 @@ impl ASICamconfig {
         config.set(
             "config",
             "max_exposure",
-            Some(self.max_exposure.as_secs().to_string()),
+            Some(format!("{:6}", self.max_exposure.as_secs_f64())),
         );
         config.set("config", "percentile", Some(self.percentile.to_string()));
         config.set("config", "maxbin", Some(self.max_bin.to_string()));
