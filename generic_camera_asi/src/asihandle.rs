@@ -499,8 +499,7 @@ impl AsiImager {
         let height = roi.height as _;
         let ptr = &mut self.imgstor;
         let mut cspace = self.cspace.clone();
-        if let ColorSpace::Bayer(pat) = cspace {
-            let mut pat = pat.shift(roi.x_min.into(), roi.y_min.into());
+        if let ColorSpace::Bayer(mut pat) = cspace {
             if let Some((flip_x, flip_y)) = expinfo.flip {
                 if flip_x {
                     pat = pat.flip_horizontal();
@@ -509,6 +508,7 @@ impl AsiImager {
                     pat = pat.flip_vertical();
                 }
             }
+            pat = pat.shift(roi.x_min.into(), roi.y_min.into());
             cspace = pat.into()
         }
         let img: DynamicImageRef = match bpp {
