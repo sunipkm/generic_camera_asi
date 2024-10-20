@@ -106,7 +106,9 @@ impl From<ASI_CAMERA_INFO> for GenCamDescriptor {
         let name = string_from_char(&value.Name);
         let mut info = HashMap::new();
         info.insert("Camera ID".to_string(), (value.CameraID as i64).into());
+        #[allow(clippy::unnecessary_cast)]
         info.insert("Sensor Height".to_string(), (value.MaxHeight as i64).into());
+        #[allow(clippy::unnecessary_cast)]
         info.insert("Sensor Width".to_string(), (value.MaxWidth as i64).into());
         info.insert(
             "Color Sensor".to_string(),

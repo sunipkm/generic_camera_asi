@@ -59,7 +59,7 @@ fn main() {
         let mut p = Gpio::new()
             .expect("Error opening GPIO")
             .get(GPIO_PWR)
-            .expect(&format!("Could not open pin {GPIO_PWR}"))
+            .unwrap_or_else(|_| panic!("Could not open pin {GPIO_PWR}"))
             .into_output();
         p.set_high(); // turn on power
         p
@@ -186,11 +186,9 @@ fn main() {
         )
         .expect("Error setting exposure time");
         // gain settings
-        cam.list_properties()
-            .get(&AnalogCtrl::Gain.into())
-            .map(|prop| {
-                println!("Gain Settings: {:#?}", prop);
-            });
+        if let Some(prop) = cam.list_properties().get(&AnalogCtrl::Gain.into()) {
+            println!("Gain Settings: {:#?}", prop);
+        }
         if let Ok((gain, auto)) = cam.get_property(AnalogCtrl::Gain.into()) {
             println!(
                 "Current gain: {:.1} dB, Auto mode: {}",
@@ -432,11 +430,11 @@ impl ASICamconfig {
             );
         }
         if config["config"].contains_key("max_exposure") {
-            cfg.max_exposure = Duration::from_secs(
+            cfg.max_exposure = Duration::from_secs_f64(
                 config["config"]["max_exposure"]
                     .clone()
                     .unwrap()
-                    .parse::<u64>()
+                    .parse::<f64>()
                     .unwrap(),
             );
         }
@@ -470,11 +468,11 @@ impl ASICamconfig {
                 .unwrap();
             cfg.target_uncertainty /= 65536.0;
         }
-        if config["config"].contains_key("gain") {}
-        cfg.gain = config["config"]["gain"]
-            .as_ref()
-            .map(|v| v.parse::<f64>().ok())
-            .flatten();
+        if config["config"].contains_key("gain") {
+            cfg.gain = config["config"]["gain"]
+                .as_ref()
+                .and_then(|v| v.parse::<f64>().ok());
+        }
         if config["config"].contains_key("target_temp") {
             cfg.target_temp = config["config"]["target_temp"]
                 .clone()
@@ -518,7 +516,7 @@ impl ASICamconfig {
         config.set(
             "config",
             "max_exposure",
-            Some(self.max_exposure.as_secs().to_string()),
+            Some(format!("{:6}", self.max_exposure.as_secs_f64())),
         );
         config.set("config", "percentile", Some(self.percentile.to_string()));
         config.set("config", "maxbin", Some(self.max_bin.to_string()));
