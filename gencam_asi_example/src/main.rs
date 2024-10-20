@@ -12,7 +12,6 @@ use std::{
 };
 
 use chrono::{DateTime, Local};
-use configparser::ini::Ini;
 use generic_camera_asi::{
     controls::{AnalogCtrl, DeviceCtrl, ExposureCtrl, SensorCtrl},
     GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, PropertyValue,
@@ -28,25 +27,11 @@ use image::imageops::FilterType;
 #[cfg(feature = "rppal")]
 use rppal::gpio::Gpio;
 
+mod config;
+use config::ASICamconfig;
+
 #[cfg(feature = "rppal")]
 const GPIO_PWR: u8 = 26;
-
-#[derive(Debug)]
-struct ASICamconfig {
-    camera: Option<String>,
-    progname: String,
-    savedir: String,
-    cadence: Duration,
-    max_exposure: Duration,
-    percentile: f64,
-    max_bin: i32,
-    target_val: f32,
-    target_uncertainty: f32,
-    gain: Option<f64>,
-    target_temp: f32,
-    save_fits: bool,
-    save_png: bool,
-}
 
 fn get_out_dir() -> PathBuf {
     PathBuf::from(env::var("OUT_DIR").unwrap_or("./".to_owned()))
@@ -385,163 +370,4 @@ fn main() {
         camthread.join().unwrap();
     }
     println!("\nExiting");
-}
-
-impl Default for ASICamconfig {
-    fn default() -> Self {
-        Self {
-            camera: None, // connect to the first camera
-            progname: "ASICam".to_string(),
-            savedir: "./data".to_string(),
-            cadence: Duration::from_secs(10),
-            max_exposure: Duration::from_secs(120),
-            percentile: 95.0,
-            max_bin: 4,
-            target_val: 30000.0 / 65536.0,
-            target_uncertainty: 2000.0 / 65536.0,
-            gain: None, // use the camera default
-            target_temp: -10.0,
-            save_fits: false,
-            save_png: true,
-        }
-    }
-}
-
-impl ASICamconfig {
-    fn from_ini(path: &PathBuf) -> Result<ASICamconfig, String> {
-        let config = Ini::new().load(path)?;
-        let mut cfg = ASICamconfig::default();
-        if config.contains_key("program") && config["program"].contains_key("name") {
-            cfg.progname = config["program"]["name"].clone().unwrap();
-        }
-        if !config.contains_key("config") {
-            return Err("No config section found".to_string());
-        }
-        if config["config"].contains_key("savedir") {
-            cfg.savedir = config["config"]["savedir"].clone().unwrap();
-        }
-        if config["config"].contains_key("cadence") {
-            cfg.cadence = Duration::from_secs(
-                config["config"]["cadence"]
-                    .clone()
-                    .unwrap()
-                    .parse::<u64>()
-                    .unwrap(),
-            );
-        }
-        if config["config"].contains_key("max_exposure") {
-            cfg.max_exposure = Duration::from_secs_f64(
-                config["config"]["max_exposure"]
-                    .clone()
-                    .unwrap()
-                    .parse::<f64>()
-                    .unwrap(),
-            );
-        }
-        if config["config"].contains_key("percentile") {
-            cfg.percentile = config["config"]["percentile"]
-                .clone()
-                .unwrap()
-                .parse::<f64>()
-                .unwrap();
-        }
-        if config["config"].contains_key("maxbin") {
-            cfg.max_bin = config["config"]["maxbin"]
-                .clone()
-                .unwrap()
-                .parse::<i32>()
-                .unwrap();
-        }
-        if config["config"].contains_key("value") {
-            cfg.target_val = config["config"]["value"]
-                .clone()
-                .unwrap()
-                .parse::<f32>()
-                .unwrap();
-            cfg.target_val /= 65536.0;
-        }
-        if config["config"].contains_key("uncertainty") {
-            cfg.target_uncertainty = config["config"]["uncertainty"]
-                .clone()
-                .unwrap()
-                .parse::<f32>()
-                .unwrap();
-            cfg.target_uncertainty /= 65536.0;
-        }
-        if config["config"].contains_key("gain") {
-            cfg.gain = config["config"]["gain"]
-                .as_ref()
-                .and_then(|v| v.parse::<f64>().ok());
-        }
-        if config["config"].contains_key("target_temp") {
-            cfg.target_temp = config["config"]["target_temp"]
-                .clone()
-                .unwrap()
-                .parse::<f32>()
-                .unwrap();
-        }
-        if config["config"].contains_key("save_fits") {
-            cfg.save_fits = config["config"]["save_fits"]
-                .clone()
-                .unwrap()
-                .parse::<bool>()
-                .unwrap();
-        } else {
-            cfg.save_fits = false;
-        }
-        if config["config"].contains_key("save_png") {
-            cfg.save_png = config["config"]["save_png"]
-                .clone()
-                .unwrap()
-                .parse::<bool>()
-                .unwrap();
-        } else {
-            cfg.save_png = false;
-        }
-        if config["config"].contains_key("camera") {
-            cfg.camera = Some(config["config"]["camera"].clone().unwrap());
-        }
-        Ok(cfg)
-    }
-
-    fn to_ini(&self, path: &PathBuf) -> Result<(), String> {
-        let mut config = Ini::new();
-        config.set("program", "name", Some(self.progname.clone()));
-        config.set("config", "savedir", Some(self.savedir.clone()));
-        config.set(
-            "config",
-            "cadence",
-            Some(self.cadence.as_secs().to_string()),
-        );
-        config.set(
-            "config",
-            "max_exposure",
-            Some(format!("{:6}", self.max_exposure.as_secs_f64())),
-        );
-        config.set("config", "percentile", Some(self.percentile.to_string()));
-        config.set("config", "maxbin", Some(self.max_bin.to_string()));
-        config.set(
-            "config",
-            "value",
-            Some((self.target_val * 65536.0).to_string()),
-        );
-        config.set(
-            "config",
-            "uncertainty",
-            Some((self.target_uncertainty * 65536.0).to_string()),
-        );
-        if let Some(gain) = self.gain {
-            config.set("config", "gain", Some(gain.to_string()));
-        }
-        config.set("config", "target_temp", Some(self.target_temp.to_string()));
-        config.set(
-            "config",
-            "max_exposure",
-            Some(self.max_exposure.as_secs().to_string()),
-        );
-        config.set("config", "save_fits", Some(self.save_fits.to_string()));
-        config.set("config", "save_png", Some(self.save_png.to_string()));
-        config.write(path).map_err(|err| err.to_string())?;
-        Ok(())
-    }
 }
