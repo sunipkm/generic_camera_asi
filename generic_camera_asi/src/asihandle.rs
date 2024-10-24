@@ -101,6 +101,7 @@ pub(crate) struct LastExposureInfo {
     pub darkframe: bool,
     pub gain: Option<i64>,
     pub flip: Option<(bool, bool)>,
+    pub e2d: f32,
 }
 
 #[derive(Debug)]
@@ -126,6 +127,7 @@ pub(crate) struct AsiImager {
     info: Arc<GenCamDescriptor>, // cloned to GenCamInfo
     device_ctrl: Arc<AsiDeviceCtrl>,
     expstart: Option<Instant>,
+    e2d: f32,
 }
 
 /// [`GenCamInfoAsi`] implements the [`GenCamInfo`] trait for ASI cameras.
@@ -260,6 +262,7 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
         device_ctrl: Arc::new(device_ctrl),
         expstart: None,
         deadline: Instant::now(),
+        e2d: info.ElecPerADU as _,
     };
     out.get_exposure()?;
     Ok(out)
@@ -335,9 +338,11 @@ impl AsiImager {
         }
     }
 
-    pub(crate) fn set_gain(&self, gain: i64) -> Result<(), GenCamError> {
+    pub(crate) fn set_gain(&mut self, gain: i64) -> Result<(), GenCamError> {
         let handle = self.handle.handle();
         set_control_value(handle, AsiControlType::Gain, gain, ASI_BOOL_ASI_FALSE as _)?;
+        let info = get_info(handle)?;
+        self.e2d = info.ElecPerADU as _;
         if let Ok(mut gainref) = self.gain.try_borrow_mut() {
             *gainref = Some(gain);
             Ok(())
@@ -397,6 +402,7 @@ impl AsiImager {
             darkframe,
             gain: self.get_gain().ok(),
             flip: self.get_flip().ok(),
+            e2d: self.e2d,
         };
         {
             let now = Instant::now();
@@ -538,10 +544,6 @@ impl AsiImager {
         );
         img.insert_key(EXPOSURE_KEY, (expinfo.exposure, "Exposure time"));
         img.insert_key(
-            "EXPTIME",
-            (expinfo.exposure.as_secs_f64(), "Exposure time in seconds"),
-        );
-        img.insert_key(
             "IMAGETYP",
             (
                 if expinfo.darkframe { "Dark" } else { "Light" },
@@ -555,6 +557,7 @@ impl AsiImager {
                 "Gain (dB)",
             ),
         );
+        img.insert_key("ADU2ELEC", (expinfo.e2d, "Electrons per ADU"));
         img.insert_key("XOFFSET", (roi.x_min, "X offset"));
         img.insert_key("YOFFSET", (roi.y_min, "Y offset"));
         img.insert_key("XBINNING", (1, "X binning"));
@@ -668,6 +671,7 @@ impl AsiImager {
                     })?,
             }
         };
+        // validation skip
         match prop {
             GenCamCtrl::Sensor(SensorCtrl::PixelFormat) => {}
             GenCamCtrl::Sensor(SensorCtrl::ReverseX) | GenCamCtrl::Sensor(SensorCtrl::ReverseY) => {
@@ -705,6 +709,8 @@ impl AsiImager {
                 if let PropertyValue::PixelFmt(fmt) = value {
                     let roi = AsiRoi::concat(&self.roi.0, *fmt);
                     self.set_roi_raw(&roi)?;
+                    let info = get_info(handle)?;
+                    self.e2d = info.ElecPerADU as _;
                     Ok(())
                 } else {
                     Err(GenCamError::PropertyError {
