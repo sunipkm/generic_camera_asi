@@ -128,6 +128,7 @@ pub(crate) struct AsiImager {
     device_ctrl: Arc<AsiDeviceCtrl>,
     expstart: Option<Instant>,
     e2d: f32,
+    counter: u32,
 }
 
 /// [`GenCamInfoAsi`] implements the [`GenCamInfo`] trait for ASI cameras.
@@ -263,6 +264,7 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
         expstart: None,
         deadline: Instant::now(),
         e2d: info.ElecPerADU as _,
+        counter: 0,
     };
     out.get_exposure()?;
     Ok(out)
@@ -452,9 +454,6 @@ impl AsiImager {
     }
 
     pub fn download_image(&mut self) -> Result<GenericImageRef, GenCamError> {
-        lazy_static::lazy_static! {
-            static ref IMGCTR: AtomicU32 = AtomicU32::new(0);
-        };
         // check if capturing, if not return error
         if !self.capturing.load(Ordering::SeqCst) {
             return Err(GenCamError::ExposureNotStarted);
@@ -540,7 +539,11 @@ impl AsiImager {
         let info = &(*self.info);
         img.insert_key(
             "IMGSER",
-            (IMGCTR.fetch_add(1, Ordering::SeqCst), "Image serial number"),
+            ({
+                let ctr = self.counter;
+                self.counter += 1;
+                ctr
+            }, "Image serial number"),
         );
         img.insert_key(EXPOSURE_KEY, (expinfo.exposure, "Exposure time"));
         img.insert_key(

@@ -21,7 +21,6 @@ exclude = [".github"]
 generic-camera = { version = ">= 0.0.9", default-features = false }
 refimage = { version = ">= 0.13", default-features = false }
 log = "0.4"
-lazy_static = "1.5"
 bytemuck = "1.18"
 
 [features]
