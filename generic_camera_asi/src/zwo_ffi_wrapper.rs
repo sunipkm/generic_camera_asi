@@ -25,7 +25,7 @@ macro_rules! ASICALL {
             if res != $crate::zwo_ffi::ASI_ERROR_CODE_ASI_SUCCESS as _ {
                 #[cfg(debug_assertions)]
                 let err = {
-                    let args = vec![$(stringify!($arg)),*];
+                    let args = [$(stringify!($arg)),*];
                     let args = args.join(", ");
                     let err = $crate::zwo_ffi_wrapper::AsiError::from((res as u32, Some(stringify!($func)), Some(args.as_str())));
                     log::warn!("Error calling {}", err);
