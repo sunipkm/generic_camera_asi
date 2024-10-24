@@ -520,12 +520,12 @@ impl AsiImager {
             GenCamPixelBpp::Bpp8 => {
                 let ptr = bytemuck::try_cast_slice_mut(ptr)
                     .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
-                let img = ImageRef::new(&mut ptr[..(width * height)], width, height, cspace)
+                let img = ImageRef::new(ptr, width, height, cspace)
                     .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
                 DynamicImageRef::U8(img)
             }
             GenCamPixelBpp::Bpp16 => {
-                let img = ImageRef::new(&mut ptr[..(width * height)], width, height, cspace)
+                let img = ImageRef::new(ptr, width, height, cspace)
                     .map_err(|e| GenCamError::InvalidFormat(format!("{:?}", e)))?;
                 DynamicImageRef::U16(img)
             }
