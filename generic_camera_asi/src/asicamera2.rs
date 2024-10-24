@@ -3,7 +3,7 @@ use std::{collections::HashMap, time::Duration};
 
 use generic_camera::{
     AnyGenCamInfo, GenCam, GenCamCtrl, GenCamDescriptor, GenCamDriver, GenCamError, GenCamResult,
-    Property, PropertyValue,
+    GenCamRoi, GenCamState, Property, PropertyValue,
 };
 use refimage::GenericImageRef;
 
@@ -121,14 +121,14 @@ impl GenCam for GenCamAsi {
         self.handle.camera_name()
     }
 
-    fn list_properties(&self) -> &std::collections::HashMap<GenCamCtrl, generic_camera::Property> {
+    fn list_properties(&self) -> &HashMap<GenCamCtrl, Property> {
         &self.caps
     }
 
     fn set_property(
         &mut self,
         name: GenCamCtrl,
-        value: &generic_camera::PropertyValue,
+        value: &PropertyValue,
         auto: bool,
     ) -> GenCamResult<()> {
         self.handle.set_property(&name, value, auto)
@@ -152,18 +152,15 @@ impl GenCam for GenCamAsi {
         self.handle.download_image()
     }
 
-    fn camera_state(&self) -> GenCamResult<generic_camera::GenCamState> {
+    fn camera_state(&self) -> GenCamResult<GenCamState> {
         self.handle.get_state()
     }
 
-    fn set_roi(
-        &mut self,
-        roi: &generic_camera::GenCamRoi,
-    ) -> GenCamResult<&generic_camera::GenCamRoi> {
+    fn set_roi(&mut self, roi: &GenCamRoi) -> GenCamResult<&GenCamRoi> {
         self.handle.set_roi(roi)
     }
 
-    fn get_roi(&self) -> &generic_camera::GenCamRoi {
+    fn get_roi(&self) -> &GenCamRoi {
         self.handle.get_roi()
     }
 
