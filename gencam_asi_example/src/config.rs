@@ -17,6 +17,10 @@ pub struct ASICamconfig {
     pub save_fits: bool,
     pub save_png: bool,
     pub pix8b: bool,
+    pub x_min: i32,
+    pub x_max: i32,
+    pub y_min: i32,
+    pub y_max: i32,
 }
 
 impl Default for ASICamconfig {
@@ -36,6 +40,10 @@ impl Default for ASICamconfig {
             save_fits: false,
             save_png: true,
             pix8b: false,
+            x_min: 0,
+            x_max: 0,
+            y_min: 0,
+            y_max: 0,
         }
     }
 }
@@ -103,6 +111,18 @@ impl ASICamconfig {
             } else {
                 cfg.pix8b = false;
             }
+            if let Some(x_min) = config.get("x_min") {
+                cfg.x_min = x_min.as_ref().unwrap().parse::<i32>().unwrap();
+            }
+            if let Some(x_max) = config.get("x_max") {
+                cfg.x_max = x_max.as_ref().unwrap().parse::<i32>().unwrap();
+            }
+            if let Some(y_min) = config.get("y_min") {
+                cfg.y_min = y_min.as_ref().unwrap().parse::<i32>().unwrap();
+            }
+            if let Some(y_max) = config.get("y_max") {
+                cfg.y_max = y_max.as_ref().unwrap().parse::<i32>().unwrap();
+            }
         } else {
             return Err("No config section found".to_string());
         }
@@ -147,7 +167,15 @@ impl ASICamconfig {
         config.set("config", "save_fits", Some(self.save_fits.to_string()));
         config.set("config", "save_png", Some(self.save_png.to_string()));
         config.set("config", "pix8b", Some(self.pix8b.to_string()));
+        config.set("config", "x_min", Some(self.x_min.to_string()));
+        config.set("config", "x_max", Some(self.x_max.to_string()));
+        config.set("config", "y_min", Some(self.y_min.to_string()));
+        config.set("config", "y_max", Some(self.y_max.to_string()));
         config.write(path).map_err(|err| err.to_string())?;
         Ok(())
+    }
+
+    pub fn change_roi(&self) -> bool {
+        self.x_min != 0 || self.x_max != 0 || self.y_min != 0 || self.y_max != 0
     }
 }

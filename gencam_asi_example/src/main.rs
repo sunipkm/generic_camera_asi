@@ -13,8 +13,7 @@ use std::{
 
 use chrono::{DateTime, Local};
 use generic_camera_asi::{
-    controls::{AnalogCtrl, DeviceCtrl, ExposureCtrl, SensorCtrl},
-    GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, PropertyValue,
+    controls::{AnalogCtrl, DeviceCtrl, ExposureCtrl, SensorCtrl}, GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, GenCamRoi, PropertyValue
 };
 #[allow(unused_imports)]
 use refimage::{
@@ -126,6 +125,27 @@ fn main() {
             .is_err()
         {
             println!("Error setting target temperature");
+        }
+
+        if cfg.change_roi() {
+            let roi = cam.get_roi();
+            println!(
+                "Current ROI: {}x{} @ {}x{}",
+                roi.width, roi.height, roi.x_min, roi.y_min
+            );
+            if let Err(e) = cam.set_roi(&GenCamRoi {
+                width: (cfg.x_max - cfg.x_min) as _,
+                height: (cfg.y_max - cfg.y_min) as _,
+                x_min: cfg.x_min as _,
+                y_min: cfg.y_min as _,
+            }) {
+                println!("Error setting ROI: {:#?}", e);
+            }
+            let roi = cam.get_roi();
+            println!(
+                "New ROI: {}x{} @ {}x{}",
+                roi.width, roi.height, roi.x_min, roi.y_min
+            );
         }
 
         let caminfo = cam.info_handle().expect("Error getting camera handle");
@@ -311,7 +331,6 @@ fn main() {
                     if cfg.save_fits {
                         let fitsfile =
                             dir_prefix.join(exp_start.format("%H%M%S%.3f.fits").to_string());
-                        let img = img.clone();
                         match img.write_fits(&fitsfile, FitsCompression::Rice, true) {
                             Ok(_) => {
                                 println!(
@@ -360,7 +379,7 @@ fn main() {
                     .expect("Could not calculate optimal exposure");
                 if opt_exp != exp {
                     println!(
-                        "\n[{}] AERO: Exposure changed from {:.3} s to {:.3} s",
+                        "\n[{}] AERO: Exposure changed from {:.6} s to {:.6} s",
                         exp_start.format("%H:%M:%S"),
                         exp.as_secs_f32(),
                         opt_exp.as_secs_f32()

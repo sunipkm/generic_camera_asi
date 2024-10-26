@@ -1,6 +1,6 @@
 [package]
 name = "gencam_asi_example"
-version = "0.0.3-pre0"
+version = "0.0.3"
 edition = "2021"
 
 [dependencies]
@@ -8,8 +8,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 configparser = "3.1"
 ctrlc = "3.4"
 generic-camera-asi = { path = "../generic_camera_asi" }
-# refimage = { version = ">= 0.13", features = ["default", "image", "fitsio"] }
-refimage = { workspace = true, features = ["default", "image", "fitsio"] }
+refimage = { version = ">= 1.0.0-pre", features = ["default", "image", "fitsio"] }
 image = { version = "0.25", default-features = false, features = [
     "rayon",
     "png",

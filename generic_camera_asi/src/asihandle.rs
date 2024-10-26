@@ -323,6 +323,11 @@ impl AsiImager {
             }
             _ => GenCamError::GeneralError(format!("{:?}", e)),
         })?;
+        let roi = AsiRoi::get(handle).map_err(|e| match e {
+            AsiError::CameraClosed(_, _) => GenCamError::CameraClosed,
+            AsiError::InvalidId(_, _) => GenCamError::InvalidId(handle),
+            _ => GenCamError::GeneralError(format!("{:?}", e)),
+        })?;
         self.roi = roi.convert();
         Ok(())
     }
@@ -569,12 +574,12 @@ impl AsiImager {
             "ADU2ELEC",
             (expinfo.e2d, "Electrons per ADU (Sensor Bit Depth)"),
         );
-        img.insert_key("SENSOR_BPP", (self.bitdepth, "Sensor bit depth"));
+        img.insert_key("SENSORBPP", (self.bitdepth, "Sensor bit depth"));
         img.insert_key("XOFFSET", (roi.x_min, "X offset"));
         img.insert_key("YOFFSET", (roi.y_min, "Y offset"));
         img.insert_key("XBINNING", (1, "X binning"));
         img.insert_key("YBINNING", (1, "Y binning"));
-        img.insert_key("CCD-TEMP", (temp, "CCD temperature"));
+        img.insert_key("CCD-TEMP", (temp, "CCD temperature (C)"));
         img.insert_key(
             "CAMERA",
             (
@@ -723,7 +728,6 @@ impl AsiImager {
                         let roi = AsiRoi::concat(&self.roi.0, *fmt);
                         self.set_roi_raw(&roi)?;
                         let info = get_info(handle)?;
-                        println!("Raw ElecPerADU: {}", info.ElecPerADU);
                         self.e2d = info.ElecPerADU as _; // total number of electrons
                         Ok(())
                     } else {

@@ -642,7 +642,6 @@ impl AsiRoi {
 
     /// Set the ROI
     pub(crate) fn set(&self, handle: i32) -> Result<(), AsiError> {
-        ASICALL!(ASISetStartPos(handle, self.x, self.y))?;
         ASICALL!(ASISetROIFormat(
             handle,
             self.width,
@@ -650,6 +649,7 @@ impl AsiRoi {
             self.bin,
             self.fmt as _
         ))?;
+        ASICALL!(ASISetStartPos(handle, self.x, self.y))?;
         Ok(())
     }
 
