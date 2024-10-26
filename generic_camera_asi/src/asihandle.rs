@@ -128,6 +128,7 @@ pub(crate) struct AsiImager {
     device_ctrl: Arc<AsiDeviceCtrl>,
     expstart: Option<Instant>,
     e2d: f32,
+    bitdepth: u8,
     counter: u32,
 }
 
@@ -264,6 +265,7 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
         expstart: None,
         deadline: Instant::now(),
         e2d: info.ElecPerADU as _,
+        bitdepth: info.BitDepth as _,
         counter: 0,
     };
     out.get_exposure()?;
@@ -539,11 +541,14 @@ impl AsiImager {
         let info = &(*self.info);
         img.insert_key(
             "IMGSER",
-            ({
-                let ctr = self.counter;
-                self.counter += 1;
-                ctr
-            }, "Image serial number"),
+            (
+                {
+                    let ctr = self.counter;
+                    self.counter += 1;
+                    ctr
+                },
+                "Image serial number",
+            ),
         );
         img.insert_key(EXPOSURE_KEY, (expinfo.exposure, "Exposure time"));
         img.insert_key(
@@ -560,7 +565,11 @@ impl AsiImager {
                 "Gain (dB)",
             ),
         );
-        img.insert_key("ADU2ELEC", (expinfo.e2d, "Electrons per ADU"));
+        img.insert_key(
+            "ADU2ELEC",
+            (expinfo.e2d, "Electrons per ADU (Sensor Bit Depth)"),
+        );
+        img.insert_key("SENSOR_BPP", (self.bitdepth, "Sensor bit depth"));
         img.insert_key("XOFFSET", (roi.x_min, "X offset"));
         img.insert_key("YOFFSET", (roi.y_min, "Y offset"));
         img.insert_key("XBINNING", (1, "X binning"));
@@ -710,11 +719,19 @@ impl AsiImager {
         match prop {
             GenCamCtrl::Sensor(SensorCtrl::PixelFormat) => {
                 if let PropertyValue::PixelFmt(fmt) = value {
-                    let roi = AsiRoi::concat(&self.roi.0, *fmt);
-                    self.set_roi_raw(&roi)?;
-                    let info = get_info(handle)?;
-                    self.e2d = info.ElecPerADU as _;
-                    Ok(())
+                    if [GenCamPixelBpp::Bpp8, GenCamPixelBpp::Bpp16].contains(fmt) {
+                        let roi = AsiRoi::concat(&self.roi.0, *fmt);
+                        self.set_roi_raw(&roi)?;
+                        let info = get_info(handle)?;
+                        println!("Raw ElecPerADU: {}", info.ElecPerADU);
+                        self.e2d = info.ElecPerADU as _; // total number of electrons
+                        Ok(())
+                    } else {
+                        Err(GenCamError::PropertyError {
+                            control: *prop,
+                            error: PropertyError::ValueNotSupported,
+                        })
+                    }
                 } else {
                     Err(GenCamError::PropertyError {
                         control: *prop,

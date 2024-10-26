@@ -207,6 +207,16 @@ fn main() {
                 }
             }
         }
+        // change to 8 bit?
+        if cfg.pix8b {
+            println!("Setting pixel format to 8-bit");
+            cam.set_property(
+                SensorCtrl::PixelFormat.into(),
+                &GenCamPixelBpp::Bpp8.into(),
+                false,
+            )
+            .expect("Error setting pixel format");
+        }
 
         let props = cam.list_properties();
         let exp_prop = props
@@ -301,21 +311,23 @@ fn main() {
                     if cfg.save_fits {
                         let fitsfile =
                             dir_prefix.join(exp_start.format("%H%M%S%.3f.fits").to_string());
-                        if img
-                            .write_fits(&fitsfile, FitsCompression::Rice, true)
-                            .is_err()
-                        {
-                            println!(
-                                "\n[{}] AERO: Failed to save FITS image, exposure {:.3} s",
-                                exp_start.format("%H:%M:%S"),
-                                exp.as_secs_f32()
-                            );
-                        } else {
-                            println!(
-                                "\n[{}] AERO: Saved FITS image, exposure {:.3} s",
-                                exp_start.format("%H:%M:%S"),
-                                exp.as_secs_f32()
-                            );
+                        let img = img.clone();
+                        match img.write_fits(&fitsfile, FitsCompression::Rice, true) {
+                            Ok(_) => {
+                                println!(
+                                    "\n[{}] AERO: Saved FITS image, exposure {:.3} s",
+                                    exp_start.format("%H:%M:%S"),
+                                    exp.as_secs_f32()
+                                );
+                            }
+                            Err(e) => {
+                                println!(
+                                    "\n[{}] AERO: Failed to save FITS image, exposure {:.3} s: {:#?}",
+                                    exp_start.format("%H:%M:%S"),
+                                    exp.as_secs_f32(),
+                                    e
+                                );
+                            }
                         }
                     }
                 }

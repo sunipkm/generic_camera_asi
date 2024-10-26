@@ -16,6 +16,7 @@ pub struct ASICamconfig {
     pub target_temp: f32,
     pub save_fits: bool,
     pub save_png: bool,
+    pub pix8b: bool,
 }
 
 impl Default for ASICamconfig {
@@ -34,6 +35,7 @@ impl Default for ASICamconfig {
             target_temp: -10.0,
             save_fits: false,
             save_png: true,
+            pix8b: false,
         }
     }
 }
@@ -96,6 +98,11 @@ impl ASICamconfig {
             if let Some(camera) = config.get("camera") {
                 cfg.camera = Some(camera.as_ref().unwrap().clone());
             }
+            if let Some(pix8b) = config.get("pix8b") {
+                cfg.pix8b = pix8b.as_ref().unwrap().parse::<bool>().unwrap();
+            } else {
+                cfg.pix8b = false;
+            }
         } else {
             return Err("No config section found".to_string());
         }
@@ -139,6 +146,7 @@ impl ASICamconfig {
         );
         config.set("config", "save_fits", Some(self.save_fits.to_string()));
         config.set("config", "save_png", Some(self.save_png.to_string()));
+        config.set("config", "pix8b", Some(self.pix8b.to_string()));
         config.write(path).map_err(|err| err.to_string())?;
         Ok(())
     }
