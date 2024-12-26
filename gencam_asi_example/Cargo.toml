@@ -17,4 +17,6 @@ rppal = { version = "0.19", optional = true }
 
 [features]
 default = ["image"]
-full = ["image", "rppal"]
+uhubctl_pi = []
+uhubctl_toradex = []
+full = ["image", "uhubctl_pi"]

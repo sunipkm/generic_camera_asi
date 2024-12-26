@@ -3,6 +3,7 @@ use std::{
     fs::OpenOptions,
     io::{self, Write},
     path::{Path, PathBuf},
+    process::Command,
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -13,7 +14,9 @@ use std::{
 
 use chrono::{DateTime, Local};
 use generic_camera_asi::{
-    controls::{AnalogCtrl, DeviceCtrl, ExposureCtrl, SensorCtrl}, GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, GenCamRoi, PropertyValue
+    controls::{AnalogCtrl, DeviceCtrl, ExposureCtrl, SensorCtrl},
+    GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, GenCamRoi,
+    PropertyValue,
 };
 #[allow(unused_imports)]
 use refimage::{
@@ -47,6 +50,19 @@ fn main() {
             .into_output();
         p.set_high(); // turn on power
         p
+    };
+    #[cfg(any(feature = "uhubctl_pi", feature = "uhubctl_toradex"))]
+    let uhubctl = {
+        match Command::new("uhubctl").spawn() {
+            Ok(_) => {
+                println!("uhubctl exists");
+                false
+            }
+            Err(e) => {
+                println!("Error starting uhubctl: {:#?}", e);
+                true
+            }
+        }
     };
     let main_run = Arc::new(AtomicBool::new(true));
     // ctrl + c handler to stop the main loop
@@ -300,6 +316,40 @@ fn main() {
                                 sleep(Duration::from_secs(5));
                                 power_pin.set_high(); // turn on power
                                 sleep(Duration::from_secs(5));
+                            }
+                            #[cfg(feature = "uhubctl_pi")]
+                            {
+                                if uhubctl {
+                                    if let Err(e) =
+                                        Command::new("uhubctl").arg("-aoff").arg("-l2").output()
+                                    {
+                                        println!("Error turning off USB hub: {:#?}", e);
+                                    }
+                                    sleep(Duration::from_secs(5));
+                                    if let Err(e) =
+                                        Command::new("uhubctl").arg("-aon").arg("-l2").output()
+                                    {
+                                        println!("Error turning on USB hub: {:#?}", e);
+                                    }
+                                    sleep(Duration::from_secs(5));
+                                }
+                            }
+                            #[cfg(feature = "uhubctl_toradex")]
+                            {
+                                if uhubctl {
+                                    if let Err(e) =
+                                        Command::new("uhubctl").arg("-aoff").arg("-l1").output()
+                                    {
+                                        println!("Error turning off USB hub: {:#?}", e);
+                                    }
+                                    sleep(Duration::from_secs(5));
+                                    if let Err(e) =
+                                        Command::new("uhubctl").arg("-aon").arg("-l1").output()
+                                    {
+                                        println!("Error turning on USB hub: {:#?}", e);
+                                    }
+                                    sleep(Duration::from_secs(5));
+                                }
                             }
                             break 'exposure_loop; // re-initialize the camera
                         }

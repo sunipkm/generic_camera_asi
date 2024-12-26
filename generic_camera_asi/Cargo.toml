@@ -1,6 +1,6 @@
 [package]
 name = "generic-camera-asi"
-version = "0.0.10"
+version = "0.0.11"
 edition = "2021"
 rust-version = "1.68.0"
 authors = ["Sunip K. Mukherjee"]
@@ -22,10 +22,10 @@ generic-camera = { version = ">= 0.0.10", default-features = false }
 refimage = { version = ">= 1.0.0-pre", default-features = false }
 log = "0.4"
 bytemuck = "1.18"
+atomic-time = "0.1"
 
 [features]
 default = []
-bayerswap = []
 
 [build-dependencies]
 bindgen = "0.70"

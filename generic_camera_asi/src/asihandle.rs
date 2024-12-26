@@ -1,4 +1,5 @@
 #![allow(unused)]
+#![allow(non_snake_case)]
 use core::{panic, str};
 use std::{
     cell::{Ref, RefCell},
@@ -15,6 +16,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
+use atomic_time::AtomicOptionInstant;
 use refimage::{BayerPattern, BayerShift, GenericImageRef, EXPOSURE_KEY};
 
 use crate::{
@@ -104,7 +106,6 @@ pub(crate) struct LastExposureInfo {
     pub e2d: f32,
 }
 
-#[derive(Debug)]
 pub(crate) struct AsiImager {
     // Root handle
     handle: Arc<AsiHandle>,
@@ -126,10 +127,37 @@ pub(crate) struct AsiImager {
     capturing: Arc<AtomicBool>,
     info: Arc<GenCamDescriptor>, // cloned to GenCamInfo
     device_ctrl: Arc<AsiDeviceCtrl>,
-    expstart: Option<Instant>,
+    expstart: Arc<AtomicOptionInstant>,
     e2d: f32,
     bitdepth: u8,
     counter: u32,
+}
+
+impl std::fmt::Debug for AsiImager {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("AsiImager")
+            .field("handle", &self.handle)
+            .field("serial", &self.serial)
+            .field("name", &self.name)
+            .field("cspace", &self.cspace)
+            .field("shutter_open", &self.shutter_open)
+            .field("exposure", &self.exposure)
+            .field("exposure_auto", &self.exposure_auto)
+            .field("gain", &self.gain)
+            .field("roi", &self.roi)
+            .field("last_exposure", &self.last_exposure)
+            .field("deadline", &self.deadline)
+            .field("imgstor", &self.imgstor)
+            .field("sensor_ctrl", &self.sensor_ctrl)
+            .field("has_cooler", &self.has_cooler)
+            .field("capturing", &self.capturing)
+            .field("info", &self.info)
+            .field("device_ctrl", &self.device_ctrl)
+            .field("e2d", &self.e2d)
+            .field("bitdepth", &self.bitdepth)
+            .field("counter", &self.counter)
+            .finish()
+    }
 }
 
 /// [`GenCamInfoAsi`] implements the [`GenCamInfo`] trait for ASI cameras.
@@ -151,15 +179,30 @@ pub(crate) struct AsiImager {
 /// } else {
 ///   println!("No cameras available");
 /// }
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GenCamInfoAsi {
     pub(crate) handle: Arc<AsiHandle>,
     pub(crate) serial: [u8; 16],
     pub(crate) name: [u8; 20],
     pub(crate) has_cooler: bool,
     pub(crate) capturing: Arc<AtomicBool>,
+    pub(crate) expstart: Arc<AtomicOptionInstant>,
     pub(crate) info: Arc<GenCamDescriptor>,
     pub(crate) ctrl: Arc<AsiDeviceCtrl>,
+}
+
+impl std::fmt::Debug for GenCamInfoAsi {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.debug_struct("GenCamInfoAsi")
+            .field("handle", &self.handle)
+            .field("serial", &self.serial)
+            .field("name", &self.name)
+            .field("has_cooler", &self.has_cooler)
+            .field("capturing", &self.capturing)
+            .field("info", &self.info)
+            .field("ctrl", &self.ctrl)
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -222,20 +265,11 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
     let len = sname.len().min(20);
     name[..len].copy_from_slice(&sname_ref[..len]);
     let bayer = if info.IsColorCam == ASI_BOOL_ASI_TRUE as _ {
-        #[cfg(not(feature = "bayerswap"))]
         match info.BayerPattern {
             ASI_BAYER_PATTERN_ASI_BAYER_BG => BayerPattern::Bggr.into(),
             ASI_BAYER_PATTERN_ASI_BAYER_GB => BayerPattern::Gbrg.into(),
             ASI_BAYER_PATTERN_ASI_BAYER_GR => BayerPattern::Grbg.into(),
             ASI_BAYER_PATTERN_ASI_BAYER_RG => BayerPattern::Rggb.into(),
-            _ => ColorSpace::Gray,
-        }
-        #[cfg(feature = "bayerswap")]
-        match info.BayerPattern {
-            ASI_BAYER_PATTERN_ASI_BAYER_BG => BayerPattern::Grbg.into(),
-            ASI_BAYER_PATTERN_ASI_BAYER_GB => BayerPattern::Rggb.into(),
-            ASI_BAYER_PATTERN_ASI_BAYER_GR => BayerPattern::Bggr.into(),
-            ASI_BAYER_PATTERN_ASI_BAYER_RG => BayerPattern::Gbrg.into(),
             _ => ColorSpace::Gray,
         }
     } else {
@@ -262,7 +296,7 @@ pub fn open_device(ginfo: &GenCamDescriptor) -> Result<AsiImager, GenCamError> {
         sensor_ctrl,
         info: Arc::new(ginfo.clone()),
         device_ctrl: Arc::new(device_ctrl),
-        expstart: None,
+        expstart: Arc::new(AtomicOptionInstant::new(None)),
         deadline: Instant::now(),
         e2d: info.ElecPerADU as _,
         bitdepth: info.BitDepth as _,
@@ -375,7 +409,8 @@ impl AsiImager {
             }
             // currently capturing
             AsiExposureStatus::Working => {
-                if let Some(expstart) = self.expstart {
+                let expstart = self.expstart.load(Ordering::Relaxed);
+                if let Some(expstart) = expstart {
                     let elapsed = expstart.elapsed();
                     Ok(GenCamState::Exposing(Some(elapsed)))
                 } else {
@@ -415,7 +450,7 @@ impl AsiImager {
         };
         {
             let now = Instant::now();
-            self.expstart = Some(now);
+            self.expstart.store(Some(now), Ordering::SeqCst);
             self.deadline = now + last_exposure.exposure + Duration::from_secs(60);
         }
         ASICALL!(ASIStartExposure(handle, to_asibool(darkframe) as _)).map_err(|e| {
@@ -483,7 +518,7 @@ impl AsiImager {
             AsiExposureStatus::Idle => {
                 self.capturing.store(false, Ordering::SeqCst);
                 *expinfo = None;
-                self.expstart = None;
+                self.expstart.store(None, Ordering::SeqCst);
                 Err(GenCamError::ExposureNotStarted)
             }
             AsiExposureStatus::Success => {
@@ -928,6 +963,7 @@ impl AsiImager {
             name: self.name,
             has_cooler: self.has_cooler,
             capturing: self.capturing.clone(),
+            expstart: self.expstart.clone(),
             info: self.info.clone(),
             ctrl: self.device_ctrl.clone(),
         }
@@ -981,7 +1017,15 @@ impl GenCamInfo for GenCamInfoAsi {
                 Ok(GenCamState::Errored(GenCamError::ExposureNotStarted))
             }
             // currently capturing
-            AsiExposureStatus::Working => Ok(GenCamState::Exposing(None)),
+            AsiExposureStatus::Working => {
+                let expstart = self.expstart.load(Ordering::Relaxed);
+                if let Some(expstart) = expstart {
+                    let elapsed = expstart.elapsed();
+                    Ok(GenCamState::Exposing(Some(elapsed)))
+                } else {
+                    Ok(GenCamState::Exposing(None))
+                }
+            }
             // exposure finished
             AsiExposureStatus::Success => Ok(GenCamState::ExposureFinished),
             // exposure failed
