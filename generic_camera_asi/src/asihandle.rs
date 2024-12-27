@@ -451,7 +451,7 @@ impl AsiImager {
         {
             let now = Instant::now();
             self.expstart.store(Some(now), Ordering::SeqCst);
-            self.deadline = now + last_exposure.exposure + Duration::from_secs(60);
+            self.deadline = now + last_exposure.exposure + Duration::from_secs(10);
         }
         ASICALL!(ASIStartExposure(handle, to_asibool(darkframe) as _)).map_err(|e| {
             self.capturing.store(false, Ordering::SeqCst);
