@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use chrono::{DateTime, Local};
+use chrono::{DateTime, Local, Utc};
 use generic_camera_asi::{
     controls::{AnalogCtrl, DeviceCtrl, ExposureCtrl, SensorCtrl},
     GenCamCtrl, GenCamDriver, GenCamDriverAsi, GenCamError, GenCamPixelBpp, GenCamRoi,
@@ -281,7 +281,7 @@ fn main() {
             //     "ROI: {}x{} @ {}x{}",
             //     roi.width, roi.height, roi.x_min, roi.y_min
             // );
-            let exp_start = Local::now();
+            let exp_start = Utc::now();
             let img = {
                 let img = cam.capture();
                 match img {
